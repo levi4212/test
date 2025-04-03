@@ -3,9 +3,9 @@
   "name": "Levi青龙环境变量同步",
   "author": "Levi",
   "icon": "https://raw.githubusercontent.com/czy13724/LeviIcons/main/leviicons/QingLong.png",
-  "repo": "https://github.com/czy13724/Quantumult-X",    
+  "repo": "https://github.com/czy13724/Quantumult-X",
   "apps": [
-      {
+    {
       "id": "Levi_Sync_Env_To_QL",
       "name": "同步环境变量到青龙",
       "author": "Levi",
@@ -15,19 +15,19 @@
         "https://raw.githubusercontent.com/czy13724/LeviIcons/main/leviicons/QingLong.png"
       ],
       "keys": [
-        "QL_ENV_VARS",
         "QL_HOST",
         "QL_CLIENT_ID",
-        "QL_CLIENT_SECRET"
+        "QL_CLIENT_SECRET",
+        "SYNC_VARS"
       ],
       "settings": [
         {
-          "id": "QL_ENV_VARS",
+          "id": "SYNC_VARS",
           "name": "要同步的变量名称（逗号分隔）",
           "val": "",
           "type": "textarea",
           "autoGrow": true,
-          "desc": "在此处填写要同步到青龙面板的变量名称，多个变量用逗号分隔。例如：jd_cookie,tb_token,my_token"
+          "desc": "在此处填写要同步到青龙面板的变量名称，多个变量用英文逗号分隔。例如：jd_cookie,tb_token,my_token"
         },
         {
           "id": "QL_HOST",
