@@ -48,10 +48,10 @@ async function main() {
             }
         }
 
-        $.msg("手机青龙环境变量同步", "同步完成!", `成功上传 ${uploadedCount} 个，失败 ${failedCount} 个`);
+        $.msg("青龙环境变量同步", "同步完成!", `成功上传 ${uploadedCount} 个，失败 ${failedCount} 个`);
 
     } catch (e) {
-        $.msg("手机青龙环境变量同步", "⛔️ 同步失败!", e.message || e);
+        $.msg("青龙环境变量同步", "⛔️ 同步失败!", e.message || e);
     } finally {
         $.done();
     }
