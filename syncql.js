@@ -122,11 +122,11 @@ function QingLong(HOST, Client_ID, Client_Secret) {
     };
     return new (class {
         /**
-        * 对接青龙API
-        * @param {*} HOST http://127.0.0.1:5700
-        * @param {*} Client_ID xxx
-        * @param {*} Client_Secret xxx
-        */
+         * 对接青龙API
+         * @param {*} HOST http://127.0.0.1:5700
+         * @param {*} Client_ID xxx
+         * @param {*} Client_Secret xxx
+         */
         constructor(HOST, Client_ID, Client_Secret) {
             this.host = HOST;
             this.clientId = Client_ID;
@@ -203,8 +203,8 @@ function QingLong(HOST, Client_ID, Client_Secret) {
             }
         }
         /**
-        * 获取所有环境变量详情
-        */
+         * 获取所有环境变量详情
+         */
         async getEnvs() {
             const options = {
                 url: `${this.host}/open/envs`,
@@ -229,8 +229,8 @@ function QingLong(HOST, Client_ID, Client_Secret) {
             }
         }
         /**
-        * 获取所有环境变量详情
-        */
+         * 获取所有环境变量详情
+         */
         async getTask(taskName) {
             const options = {
                 url: `${this.host}/open/crons`,
@@ -290,9 +290,9 @@ function QingLong(HOST, Client_ID, Client_Secret) {
             return this.envs.filter((item) => item.remarks === remarks);
         }
         /**
-        * 添加环境变量
-        * @param {*} array [{value:'变量值',name:'变量名',remarks:'备注'}]
-        */
+         * 添加环境变量
+         * @param {*} array [{value:'变量值',name:'变量名',remarks:'备注'}]
+         */
         async addEnv(array) {
             const options = {
                 url: `${this.host}/open/envs`,
@@ -319,8 +319,8 @@ function QingLong(HOST, Client_ID, Client_Secret) {
         }
         /**
          * 修改环境变量
-        * @param {*} obj {value:'变量值',name:'变量名',remarks:'备注',id:0}
-        */
+         * @param {*} obj {value:'变量值',name:'变量名',remarks:'备注',id:0}
+         */
         async updateEnv(obj) {
             const options = {
                 url: `${this.host}/open/envs`,
@@ -346,12 +346,12 @@ function QingLong(HOST, Client_ID, Client_Secret) {
                     : "Network Error.";
             }
         }
-        
-        
+
+
         /**
          * 运行任务
-        * @param {*}  array [taskId]
-        */
+         * @param {*}  array [taskId]
+         */
         async runTask(taskIds) {
             const options = {
                 url: `${this.host}/open/crons/run`,
