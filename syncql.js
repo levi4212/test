@@ -1,5 +1,5 @@
 // env.js (最终版本，用于手机端读取指定变量并直接上传到青龙)
-const $ = new Env("PhoneQinglongSync");
+const $ = new Env("LeviQinglongSync");
 //青龙配置
 let QL = {};
 
