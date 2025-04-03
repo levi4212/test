@@ -1,17 +1,20 @@
-// env.js 全局
-const $ = new Env("Levi青龙环境变量同步");
+// env.js (最终版本，用于手机端读取指定变量并直接上传到青龙)
+const $ = new Env("PhoneQinglongSync");
 //青龙配置
 let QL = {};
+
 async function main() {
     try {
-        // 从 BoxJS 获取配置信息
-        const qlEnvVars = $.getdata("QL_ENV_VARS");
+        // 从 BoxJS 获取青龙配置信息
         const qlHost = $.getdata("QL_HOST");
         const qlClientId = $.getdata("QL_CLIENT_ID");
         const qlClientSecret = $.getdata("QL_CLIENT_SECRET");
 
-        if (!qlEnvVars || !qlHost || !qlClientId || !qlClientSecret) {
-            throw new Error("⛔️ 请在 BoxJS 中配置青龙信息!");
+        // 从 BoxJS 获取需要同步的变量名列表 (假设你存储在一个名为 SYNC_VARS 的变量中，用逗号分隔)
+        const syncVarNamesStr = $.getdata("SYNC_VARS");
+
+        if (!syncVarNamesStr || !qlHost || !qlClientId || !qlClientSecret) {
+            throw new Error("⛔️ 请在 BoxJS 中配置青龙信息和需要同步的变量名 (SYNC_VARS)!");
         }
 
         QL = {
@@ -20,57 +23,35 @@ async function main() {
             secret: qlClientSecret,
         };
 
-        // 获取要同步的变量名称数组
-        const authNames = qlEnvVars.split(",");
+        const syncVarNames = syncVarNamesStr.split(',').map(name => name.trim());
 
-        for (let authName of authNames) {
-            // 从 BoxJS 获取 CK/Token
-            let authValue = $.getdata(authName);
-            if (!authValue) {
-                $.log(`⚠️ BoxJS 中未找到 ${authName}，跳过同步`);
-                continue;
-            }
+        const ql = new QingLong(QL.host, QL.clientId, QL.secret);
+        await ql.checkLogin(); // 获取或刷新青龙 Token
 
-            // 尝试解析 JSON 数据
-            let authJson;
-            try {
-                authJson = JSON.parse(authValue);
-            } catch (e) {
-                $.log(`⚠️ ${authName} 不是有效的 JSON 格式，跳过同步`);
-                continue;
-            }
+        let uploadedCount = 0;
+        let failedCount = 0;
 
-            // 提取用户信息，如果不存在则为空
-            let userId = authJson.userId || "";
-            let avatar = authJson.avatar || "";
-            let userName = authJson.userName || "";
-
-            const user = {
-                name: authName,
-                value: JSON.stringify(authJson), // 将 JSON 对象转换为字符串存储
-                user: {
-                    userId: userId,
-                    avatar: avatar,
-                    userName: userName,
-                },
-            };
-
-            const ql = new QingLong(QL.host, QL.clientId, QL.secret);
-            await ql.checkLogin();
-            await ql.getEnvs();
-            const envs = ql.selectEnvByName("QL_ENVS");
-            let QL_ENVS = envs.length > 0 ? JSON.parse(envs[0].value) : {};
-            QL_ENVS[authName] = user;
-            if (envs.length > 0) {
-                await ql.updateEnv({ value: JSON.stringify(QL_ENVS), name: "QL_ENVS", id: envs[0].id });
+        for (const varName of syncVarNames) {
+            const boxJsValue = $.getdata(varName);
+            if (boxJsValue !== null && boxJsValue !== undefined) {
+                const addResult = await ql.addOrUpdateEnv({ name: varName, value: boxJsValue });
+                if (addResult) {
+                    $.log(`✅ 成功上传环境变量: ${varName}`);
+                    uploadedCount++;
+                } else {
+                    $.log(`⚠️ 上传环境变量 ${varName} 失败，请查看日志。`);
+                    failedCount++;
+                }
             } else {
-                await ql.addEnv([{ value: JSON.stringify(QL_ENVS), name: "QL_ENVS" }]);
+                $.log(`⚠️ BoxJS 中未找到变量: ${varName}`);
+                failedCount++;
             }
-            $.log(`✅ ${authName} 同步成功!`);
         }
-        $.msg("Levi青龙环境变量同步", "同步完成!", "");
+
+        $.msg("手机青龙环境变量同步", "同步完成!", `成功上传 ${uploadedCount} 个，失败 ${failedCount} 个`);
+
     } catch (e) {
-        $.msg("Levi青龙环境变量同步", "⛔️ 同步失败!", e.message || e);
+        $.msg("手机青龙环境变量同步", "⛔️ 同步失败!", e.message || e);
     } finally {
         $.done();
     }
@@ -288,6 +269,34 @@ function QingLong(HOST, Client_ID, Client_Secret) {
         }
         selectEnvByRemarks(remarks) {
             return this.envs.filter((item) => item.remarks === remarks);
+        }
+        /**
+         * 添加或更新环境变量
+         * @param {*} obj {value:'变量值',name:'变量名',remarks:'备注'}
+         */
+        async addOrUpdateEnv(obj) {
+            await this.getEnvs(); // 确保 envs 列表是最新的
+            const envIndex = this.envs.findIndex(env => env.name === obj.name);
+            if (envIndex > -1) {
+                const existingEnv = this.envs[envIndex];
+                const updateObj = { value: obj.value, name: obj.name, id: existingEnv.id };
+                try {
+                    await this.updateEnv(updateObj);
+                    return true;
+                } catch (e) {
+                    $.log(`⚠️ 更新环境变量 ${obj.name} 失败: ${e}`);
+                    return false;
+                }
+            } else {
+                const addArray = [{ value: obj.value, name: obj.name }];
+                try {
+                    await this.addEnv(addArray);
+                    return true;
+                } catch (e) {
+                    $.log(`⚠️ 添加环境变量 ${obj.name} 失败: ${e}`);
+                    return false;
+                }
+            }
         }
         /**
          * 添加环境变量
