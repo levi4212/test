@@ -111,9 +111,11 @@ def main():
         utc_time = utc_now.strftime("%F %T") + " UTC"
         cst_time = local_time.strftime("%F %T") + " (UTC+8)"
         if lang == "zh":
-            title = "📦 Gist 自动备份完成"
-            content = f"🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个\n🕒 {cst_time}"
+        title = "📦 Gist 自动备份完成"
+        content = f"🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个"
         else:
+        title = "📦 Gist Backup Completed"
+        content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}"
             title = "📦 Gist Backup Completed"
             content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}\n🕒 {utc_time}"
         from datetime import datetime, timedelta
@@ -127,8 +129,11 @@ def main():
         utc_time = utc_now.strftime('%F %T') + ' UTC'
         cst_time = local_time.strftime('%F %T') + ' (UTC+8)'
         if lang == "zh":
-            title = "📦 Gist 自动备份完成"
-            content = f"🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个"
+        title = "📦 Gist 自动备份完成"
+        content = f"🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个"
+        else:
+        title = "📦 Gist Backup Completed"
+        content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}"
         else:
             title = "📦 Gist Backup Completed"
             content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}\n🕒 {utc_time}"
