@@ -7,6 +7,12 @@ on:
 
 env:
   CLEAN_MODE: false
+  BARK_PUSH_URL: ${{ secrets.BARK_PUSH_URL }}
+  SERVERCHAN_SEND_KEY: ${{ secrets.SERVERCHAN_SEND_KEY }}
+  WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
+  TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+  TG_USER_ID: ${{ secrets.TG_USER_ID }}
+  NOTIFY_LANG: ${{ secrets.NOTIFY_LANG }}
 
 jobs:
   sync:
@@ -67,7 +73,6 @@ jobs:
           done
           echo "deleted=$deleted" >> $GITHUB_OUTPUT
 
-
       - name: Commit and Push changes
         run: |
           git config user.name "github-actions[bot]"
@@ -76,15 +81,9 @@ jobs:
           git commit -m "🔄 脚本更新：新增 ${{ steps.download.outputs.added }} 个，修改 ${{ steps.download.outputs.changed }} 个，删除 ${{ steps.cleanup.outputs.deleted }} 个" || echo "✅ 无更新"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
 
+      - name: Send Notifications
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add SCRIPTS-BACKUP
-          git commit -m "🔄 脚本更新：新增 ${{ steps.download.outputs.added }} 个，修改 ${{ steps.download.outputs.changed }} 个，删除 ${{ steps.cleanup.outputs.deleted }} 个" || echo "✅ 无更新"
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
-- name: Send Notifications
-        run: |
-          lang="${{ secrets.NOTIFY_LANG }}"
+          lang="$NOTIFY_LANG"
           if [ "$lang" = "zh" ]; then
             title="📦 Gist 自动备份完成"
             content="🆕 新增: ${{ steps.download.outputs.added }} 个\n📝 修改: ${{ steps.download.outputs.changed }} 个\n🗑️ 删除: ${{ steps.cleanup.outputs.deleted }} 个\n🕒 $(date '+%F %T')"
@@ -93,24 +92,24 @@ jobs:
             content="🆕 Added: ${{ steps.download.outputs.added }}\n📝 Updated: ${{ steps.download.outputs.changed }}\n🗑️ Deleted: ${{ steps.cleanup.outputs.deleted }}\n🕒 $(date '+%F %T')"
           fi
 
-          if [ ! -z "${{ secrets.BARK_PUSH_URL }}" ]; then
-            curl -s "${{ secrets.BARK_PUSH_URL }}/${title}/${content}"
+          if [ -n "$BARK_PUSH_URL" ]; then
+            curl -s "${BARK_PUSH_URL}/${title}/${content}"
           fi
 
-          if [ ! -z "${{ secrets.SERVERCHAN_SEND_KEY }}" ]; then
-            curl -s -X POST https://sctapi.ftqq.com/${{ secrets.SERVERCHAN_SEND_KEY }}.send \
+          if [ -n "$SERVERCHAN_SEND_KEY" ]; then
+            curl -s -X POST https://sctapi.ftqq.com/${SERVERCHAN_SEND_KEY}.send \
               -d "title=${title}" -d "desp=${content}"
           fi
 
-          if [ ! -z "${{ secrets.WECHAT_WEBHOOK_URL }}" ]; then
+          if [ -n "$WECHAT_WEBHOOK_URL" ]; then
             curl -s -H 'Content-Type: application/json' -d "{
               \"msgtype\": \"text\",
               \"text\": { \"content\": \"${title}\\n${content}\" }
-            }" "${{ secrets.WECHAT_WEBHOOK_URL }}"
+            }" "$WECHAT_WEBHOOK_URL"
           fi
 
-          if [ ! -z "${{ secrets.TG_BOT_TOKEN }}" ] && [ ! -z "${{ secrets.TG_USER_ID }}" ]; then
-            curl -s -X POST https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage \
-              -d chat_id="${{ secrets.TG_USER_ID }}" \
+          if [ -n "$TG_BOT_TOKEN" ] && [ -n "$TG_USER_ID" ]; then
+            curl -s -X POST https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage \
+              -d chat_id="${TG_USER_ID}" \
               -d text="${title}\n${content}"
           fi
