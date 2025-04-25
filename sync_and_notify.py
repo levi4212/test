@@ -130,7 +130,6 @@ def main():
             title = "📦 Gist 自动备份完成"
             content = f"🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个"
         else:
-        else:
             title = "📦 Gist Backup Completed"
             content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}\n🕒 {utc_time}"
             title = "📦 Gist Backup Completed"
