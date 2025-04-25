@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-import os, json, requests, shutil
+import os, json, requests
 from urllib.parse import quote
-from datetime import datetime
 
 CONFIG_FILE = "script-gist.json"
 BACKUP_DIR = "SCRIPTS-BACKUP"
@@ -102,53 +101,32 @@ def main():
     if updated_files or deleted_files:
         os.system("git push")
 
-    # Notification
     notify = os.getenv("FORCE_NOTIFY", "true").lower() == "true" or added or updated or deleted
     if notify:
         lang = os.getenv("NOTIFY_LANG", "en")
-        utc_now = datetime.utcnow()
-        local_time = utc_now + timedelta(hours=8)
-        utc_time = utc_now.strftime("%F %T") + " UTC"
-        cst_time = local_time.strftime("%F %T") + " (UTC+8)"
         if lang == "zh":
-        title = "📦 Gist 自动备份完成"
-        content = f"🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个"
-        else:
-        title = "📦 Gist Backup Completed"
-        content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}"
-            title = "📦 Gist Backup Completed"
-            content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}\n🕒 {utc_time}"
-        from datetime import datetime, timedelta
-        utc_now = datetime.utcnow()
-        local_time = utc_now + timedelta(hours=8)
-        utc_time = utc_now.strftime('%F %T') + ' UTC'
-        cst_time = local_time.strftime('%F %T') + ' (UTC+8)'
-        from datetime import datetime, timedelta
-        utc_now = datetime.utcnow()
-        local_time = utc_now + timedelta(hours=8)
-        utc_time = utc_now.strftime('%F %T') + ' UTC'
-        cst_time = local_time.strftime('%F %T') + ' (UTC+8)'
-        if lang == "zh":
-        title = "📦 Gist 自动备份完成"
-        content = f"🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个"
-        else:
-        title = "📦 Gist Backup Completed"
-        content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}"
+            title = "📦 Gist 自动备份完成"
+            content = f"🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个"
         else:
             title = "📦 Gist Backup Completed"
-            content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}\n🕒 {utc_time}"
-            title = "📦 Gist Backup Completed"
-            content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}\n🕒 {utc_time}"
             content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}"
 
-        if url := os.getenv("BARK_PUSH_URL"):
-            send_bark(title, content, url)
-        if key := os.getenv("SERVERCHAN_SEND_KEY"):
-            send_serverchan(title, content, key)
-        if hook := os.getenv("WECHAT_WEBHOOK_URL"):
-            send_wechat(title, content, hook)
-        if os.getenv("TG_BOT_TOKEN") and os.getenv("TG_USER_ID"):
-            send_telegram(title, content, os.getenv("TG_BOT_TOKEN"), os.getenv("TG_USER_ID"))
+        bark_url = os.getenv("BARK_PUSH_URL")
+        if bark_url:
+            send_bark(title, content, bark_url)
+
+        server_key = os.getenv("SERVERCHAN_SEND_KEY")
+        if server_key:
+            send_serverchan(title, content, server_key)
+
+        wechat_hook = os.getenv("WECHAT_WEBHOOK_URL")
+        if wechat_hook:
+            send_wechat(title, content, wechat_hook)
+
+        tg_token = os.getenv("TG_BOT_TOKEN")
+        tg_user = os.getenv("TG_USER_ID")
+        if tg_token and tg_user:
+            send_telegram(title, content, tg_token, tg_user)
 
 if __name__ == "__main__":
     main()
