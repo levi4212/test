@@ -128,14 +128,14 @@ def main():
         cst_time = local_time.strftime('%F %T') + ' (UTC+8)'
         if lang == "zh":
             title = "📦 Gist 自动备份完成"
-            content = f"🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个\n🕒 {now}"
+            content = f"🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个"
         else:
         else:
             title = "📦 Gist Backup Completed"
             content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}\n🕒 {utc_time}"
             title = "📦 Gist Backup Completed"
             content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}\n🕒 {utc_time}"
-            content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}\n🕒 {now}"
+            content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}"
 
         if url := os.getenv("BARK_PUSH_URL"):
             send_bark(title, content, url)
