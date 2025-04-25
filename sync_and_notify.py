@@ -123,6 +123,8 @@ def main():
         else:
             title = "📦 Gist Backup Completed"
             content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}\n🕒 {utc_time}"
+            title = "📦 Gist Backup Completed"
+            content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}\n🕒 {utc_time}"
             content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}\n🕒 {now}"
 
         if url := os.getenv("BARK_PUSH_URL"):
