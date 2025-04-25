@@ -96,15 +96,15 @@ def main():
         os.system(f'git add "{f}" && git commit -m "sync: {os.path.basename(f)}"')
 
     for f in deleted_files:
-        os.system(f'git rm "{BACKUP_DIR}/{f}" && git commit -m "sync: removed {f}"')
+        os.system(f'git rm "{BACKUP_DIR}/{f}" && git commit -m "removed: {f}"')
 
     if updated_files or deleted_files:
         os.system("git push")
 
     notify = os.getenv("FORCE_NOTIFY", "true").lower() == "true" or added or updated or deleted
     if notify:
-        lang = os.getenv("NOTIFY_LANG", "en")
-        if lang == "zh":
+        lang = os.getenv("NOTIFY_LANG", "en-us")
+        if lang == "zh-cn":
             title = "📦 Gist 自动备份完成"
             content = f"🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个"
         else:
