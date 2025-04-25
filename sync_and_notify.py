@@ -106,6 +106,16 @@ def main():
     notify = os.getenv("FORCE_NOTIFY", "true").lower() == "true" or added or updated or deleted
     if notify:
         lang = os.getenv("NOTIFY_LANG", "en")
+        utc_now = datetime.utcnow()
+        local_time = utc_now + timedelta(hours=8)
+        utc_time = utc_now.strftime("%F %T") + " UTC"
+        cst_time = local_time.strftime("%F %T") + " (UTC+8)"
+        if lang == "zh":
+            title = "📦 Gist 自动备份完成"
+            content = f"🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个\n🕒 {cst_time}"
+        else:
+            title = "📦 Gist Backup Completed"
+            content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}\n🕒 {utc_time}"
         from datetime import datetime, timedelta
         utc_now = datetime.utcnow()
         local_time = utc_now + timedelta(hours=8)
