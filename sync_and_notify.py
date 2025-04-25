@@ -106,10 +106,10 @@ def main():
         lang = os.getenv("NOTIFY_LANG", "en-us")
         if lang == "zh-cn":
             title = "📦 远程脚本自动备份"
-            content = f"远程脚本自动备份完成\n🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个"
+            content = f"✅远程脚本自动备份完成\n🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个"
         else:
             title = "📦 Remote Script Backup"
-            content = f"Remote Script Backup Completed\n🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}"
+            content = f"✅Remote Script Backup Completed\n🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}"
 
         bark_url = os.getenv("BARK_PUSH_URL")
         if bark_url:
