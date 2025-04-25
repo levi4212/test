@@ -1,4 +1,4 @@
-name: Sync Gist Scripts
+name: Gist Backup via Python
 
 on:
   schedule:
@@ -7,8 +7,8 @@ on:
 
 env:
   CLEAN_MODE: true
-  NOTIFY_LANG: en  # 设置为 zh 可切换中文
-  FORCE_NOTIFY: true  # 即使没有变化也推送通知
+  FORCE_NOTIFY: true
+  NOTIFY_LANG: en
   BARK_PUSH_URL: ${{ secrets.BARK_PUSH_URL }}
   SERVERCHAN_SEND_KEY: ${{ secrets.SERVERCHAN_SEND_KEY }}
   WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
@@ -16,144 +16,19 @@ env:
   TG_USER_ID: ${{ secrets.TG_USER_ID }}
 
 jobs:
-  sync:
+  run-script:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-      - name: Install jq and Python
-        run: sudo apt-get install -y jq python3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
 
-      - name: Verify script-gist.json exists
-        run: |
-          if [[ ! -f "script-gist.json" ]]; then
-            echo "❌ 未找到 script-gist.json，跳过本次备份。"
-            exit 0
-          fi
+      - name: Install Requests
+        run: pip install requests
 
-      - name: Create backup directory
-        run: mkdir -p SCRIPTS-BACKUP
-
-      - name: Load JSON and Sync Scripts
-        id: download
-        run: |
-          added=0
-          changed=0
-          touch update_list.txt
-
-          jq -r 'to_entries[] | "\(.key) \(.value)"' script-gist.json > entries.txt
-
-          while read name url; do
-            filename="SCRIPTS-BACKUP/${name}.js"
-            tmpfile=$(mktemp)
-            curl -sL "$url" -o "$tmpfile"
-            if [[ -f "$filename" ]]; then
-              if ! cmp -s "$filename" "$tmpfile"; then
-                mv "$tmpfile" "$filename"
-                echo "$filename" >> update_list.txt
-                changed=$((changed + 1))
-              else
-                rm "$tmpfile"
-              fi
-            else
-              mv "$tmpfile" "$filename"
-              echo "$filename" >> update_list.txt
-              added=$((added + 1))
-            fi
-          done < entries.txt
-
-          echo "added=$added" >> $GITHUB_OUTPUT
-          echo "changed=$changed" >> $GITHUB_OUTPUT
-
-      - name: Cleanup unreferenced files
-        if: env.CLEAN_MODE == 'true'
-        id: cleanup
-        run: |
-          deleted=0
-          touch delete_list.txt
-          jq -r 'keys[]' script-gist.json | sed 's/.*/SCRIPTS-BACKUP\/&.js/' > keep_list.txt
-          for f in SCRIPTS-BACKUP/*.js; do
-            grep -Fxq "$f" keep_list.txt || {
-              echo "$f" >> delete_list.txt
-              rm "$f"
-              deleted=$((deleted + 1))
-            }
-          done
-          echo "deleted=$deleted" >> $GITHUB_OUTPUT
-
-      - name: Commit updated files
-        if: steps.download.outputs.added != '0' || steps.download.outputs.changed != '0'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          while read filepath; do
-            git add "$filepath"
-            fname=$(basename "$filepath")
-            git commit -m "sync: $fname"
-          done < update_list.txt
-
-      - name: Commit deleted files
-        if: steps.cleanup.outputs.deleted != '0'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          while read filepath; do
-            git rm "$filepath"
-            fname=$(basename "$filepath")
-            git commit -m "sync: removed $fname"
-          done < delete_list.txt
-
-      - name: Push to GitHub
-        if: steps.download.outputs.added != '0' || steps.download.outputs.changed != '0' || steps.cleanup.outputs.deleted != '0'
-        run: |
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
-
-      - name: Send Notifications
-        if: env.FORCE_NOTIFY == 'true' || steps.download.outputs.added != '0' || steps.download.outputs.changed != '0' || steps.cleanup.outputs.deleted != '0'
-        run: |
-          urlencode() {
-            python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$1"
-          }
-
-          lang="${NOTIFY_LANG:-en}"
-          a="${{ steps.download.outputs.added }}"
-          c="${{ steps.download.outputs.changed }}"
-          d="${{ steps.cleanup.outputs.deleted }}"
-          a="${a:-0}"
-          c="${c:-0}"
-          d="${d:-0}"
-
-          if [ "$lang" = "zh" ]; then
-            title="📦 Gist 自动备份完成"
-            content="🆕 新增: $a 个\n📝 修改: $c 个\n🗑️ 删除: $d 个\n🕒 $(date '+%F %T') UTC"
-          else
-            title="📦 Gist Backup Completed"
-            content="🆕 Added: $a\n📝 Updated: $c\n🗑️ Deleted: $d\n🕒 $(date '+%F %T') UTC"
-          fi
-
-          etitle=$(urlencode "$title")
-          econtent=$(urlencode "$content")
-
-          if [ -n "$BARK_PUSH_URL" ]; then
-            curl -s "${BARK_PUSH_URL}/${etitle}/${econtent}" || true
-          fi
-
-          if [ -n "$SERVERCHAN_SEND_KEY" ]; then
-            curl -s -X POST https://sctapi.ftqq.com/${SERVERCHAN_SEND_KEY}.send \
-              -d "title=${title}" -d "desp=${content}" || true
-          fi
-
-          if [ -n "$WECHAT_WEBHOOK_URL" ]; then
-            curl -s -H 'Content-Type: application/json' -d "{
-              \"msgtype\": \"text\",
-              \"text\": { \"content\": \"${title}\\n${content}\" }
-            }" "$WECHAT_WEBHOOK_URL" || true
-          fi
-
-          if [ -n "$TG_BOT_TOKEN" ] && [ -n "$TG_USER_ID" ]; then
-            curl -s -X POST https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage \
-              -d chat_id="${TG_USER_ID}" \
-              -d text="${title}\n${content}" || true
-          fi
+      - name: Run sync_and_notify.py
+        run: python3 sync_and_notify.py
