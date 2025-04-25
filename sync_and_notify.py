@@ -105,11 +105,11 @@ def main():
     if notify:
         lang = os.getenv("NOTIFY_LANG", "en-us")
         if lang == "zh-cn":
-            title = "📦 Gist 自动备份完成"
-            content = f"🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个"
+            title = "📦 远程脚本自动备份"
+            content = f"远程脚本自动备份完成\n🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个"
         else:
-            title = "📦 Gist Backup Completed"
-            content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}"
+            title = "📦 Remote Script Backup"
+            content = f"Remote Script Backup Completed\n🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}"
 
         bark_url = os.getenv("BARK_PUSH_URL")
         if bark_url:
