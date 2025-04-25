@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  CLEAN_MODE: false
+  CLEAN_MODE: true
   BARK_PUSH_URL: ${{ secrets.BARK_PUSH_URL }}
   SERVERCHAN_SEND_KEY: ${{ secrets.SERVERCHAN_SEND_KEY }}
   WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
