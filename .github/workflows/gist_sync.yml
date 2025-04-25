@@ -113,6 +113,9 @@ jobs:
       - name: Send Notifications
         if: env.FORCE_NOTIFY == 'true' || steps.download.outputs.added != '0' || steps.download.outputs.changed != '0' || steps.cleanup.outputs.deleted != '0'
         run: |
+          timestamp="$(date '+%F %T') UTC"
+          timestamp="$(date '+%F %T') UTC"
+          timestamp="$(date '+%F %T') UTC"
           urlencode() {
             python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$1"
           }
@@ -127,10 +130,19 @@ jobs:
 
           if [ "$lang" = "zh" ]; then
             title="📦 Gist 自动备份完成"
-            content="🆕 新增: $a 个\n📝 修改: $c 个\n🗑️ 删除: $d 个\n🕒 $(date '+%F %T')"
+          content="🆕 Added: $a"
+          content+="\n📝 Updated: $c"
+          content+="\n🗑️ Deleted: $d"
+          content+="\n🕒 $timestamp"
+📝 Updated: $c
+🗑️ Deleted: $d
+🕒 $(date '+%F %T') UTC"
           else
             title="📦 Gist Backup Completed"
-            content="🆕 Added: $a\n📝 Updated: $c\n🗑️ Deleted: $d\n🕒 $(date '+%F %T')"
+          content="🆕 Added: $a
+📝 Updated: $c
+🗑️ Deleted: $d
+🕒 $(date '+%F %T') UTC"
           fi
 
           etitle=$(urlencode "$title")
