@@ -8,7 +8,7 @@ on:
 env:
   CLEAN_MODE: true
   FORCE_NOTIFY: true
-  NOTIFY_LANG: cn
+  NOTIFY_LANG: zh-cn
   BARK_PUSH_URL: ${{ secrets.BARK_PUSH_URL }}
   SERVERCHAN_SEND_KEY: ${{ secrets.SERVERCHAN_SEND_KEY }}
   WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
