@@ -1,0 +1,110 @@
+name: Sync Gist Scripts
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+env:
+  CLEAN_MODE: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Verify script-gist.json exists
+        run: |
+          if [[ ! -f "script-gist.json" ]]; then
+            echo "❌ 未找到 script-gist.json，跳过本次备份。"
+            exit 0
+          fi
+
+      - name: Create backup directory
+        run: mkdir -p SCRIPTS-BACKUP
+
+      - name: Load JSON and Download Scripts
+        id: download
+        run: |
+          changed=0
+          added=0
+          jq -r 'to_entries[] | "\(.key) \(.value)"' script-gist.json > entries.txt
+
+          while read name url; do
+            file="SCRIPTS-BACKUP/${name}.js"
+            tmpfile=$(mktemp)
+            curl -sL "$url" -o "$tmpfile"
+            if [[ -f "$file" ]]; then
+              if ! cmp -s "$file" "$tmpfile"; then
+                mv "$tmpfile" "$file"
+                changed=$((changed + 1))
+              else
+                rm "$tmpfile"
+              fi
+            else
+              mv "$tmpfile" "$file"
+              added=$((added + 1))
+            fi
+          done < entries.txt
+
+          echo "changed=$changed" >> $GITHUB_OUTPUT
+          echo "added=$added" >> $GITHUB_OUTPUT
+
+      - name: Cleanup unreferenced files
+        if: env.CLEAN_MODE == 'true'
+        id: cleanup
+        run: |
+          deleted=0
+          jq -r 'keys[]' script-gist.json | sed 's/.*/SCRIPTS-BACKUP\/&.js/' > keep_list.txt
+          for f in SCRIPTS-BACKUP/*.js; do
+            grep -Fxq "$f" keep_list.txt || { rm "$f"; deleted=$((deleted + 1)); }
+          done
+          echo "deleted=$deleted" >> $GITHUB_OUTPUT
+
+      - name: Commit and Push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add SCRIPTS-BACKUP
+          git commit -m "🔄 脚本更新：新增 ${{ steps.download.outputs.added }} 个，修改 ${{ steps.download.outputs.changed }} 个，删除 ${{ steps.cleanup.outputs.deleted }} 个" || echo "✅ 无更新"
+          git push
+
+
+      - name: Send Notifications
+        run: |
+          lang="${{ secrets.NOTIFY_LANG }}"
+          if [ "$lang" = "zh" ]; then
+            title="📦 Gist 自动备份完成"
+            content="🆕 新增: ${{ steps.download.outputs.added }} 个\n📝 修改: ${{ steps.download.outputs.changed }} 个\n🗑️ 删除: ${{ steps.cleanup.outputs.deleted }} 个\n🕒 $(date '+%F %T')"
+          else
+            title="📦 Gist Backup Completed"
+            content="🆕 Added: ${{ steps.download.outputs.added }}\n📝 Updated: ${{ steps.download.outputs.changed }}\n🗑️ Deleted: ${{ steps.cleanup.outputs.deleted }}\n🕒 $(date '+%F %T')"
+          fi
+
+          if [ ! -z "${{ secrets.BARK_PUSH_URL }}" ]; then
+            curl -s "${{ secrets.BARK_PUSH_URL }}/${title}/${content}"
+          fi
+
+          if [ ! -z "${{ secrets.SERVERCHAN_SEND_KEY }}" ]; then
+            curl -s -X POST https://sctapi.ftqq.com/${{ secrets.SERVERCHAN_SEND_KEY }}.send \
+              -d "title=${title}" -d "desp=${content}"
+          fi
+
+          if [ ! -z "${{ secrets.WECHAT_WEBHOOK_URL }}" ]; then
+            curl -s -H 'Content-Type: application/json' -d "{
+              \"msgtype\": \"text\",
+              \"text\": { \"content\": \"${title}\\n${content}\" }
+            }" "${{ secrets.WECHAT_WEBHOOK_URL }}"
+          fi
+
+          if [ ! -z "${{ secrets.TG_BOT_TOKEN }}" ] && [ ! -z "${{ secrets.TG_USER_ID }}" ]; then
+            curl -s -X POST https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage \
+              -d chat_id="${{ secrets.TG_USER_ID }}" \
+              -d text="${title}\n${content}"
+          fi
