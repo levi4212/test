@@ -6,5 +6,11 @@
   "什么值得买签到": "https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/script/smzdm/smzdm_daily.js",
   "爱儿心选签到": "https://gist.githubusercontent.com/Sliverkiss/7154037ef7991541c1f31e87117fb71c/raw/arxx.js",
   "海底捞签到": "https://gist.githubusercontent.com/Sliverkiss/354e7994f9ee5cc9cc353b6aba320052/raw/hdl.js",
-  "顺丰社区签到": "https://gist.githubusercontent.com/Sliverkiss/2cadc6a4022ab2866aced9adda0a5744/raw/sfsyCommunity.js"
+  "顺丰社区签到": "https://gist.githubusercontent.com/Sliverkiss/2cadc6a4022ab2866aced9adda0a5744/raw/sfsyCommunity.js",
+  "西施眼签到": "https://raw.githubusercontent.com/xzxxn777/Surge/refs/heads/main/Script/XiShiYan/XiShiYan.sgmodule",
+  "浓五的酒馆": "https://raw.githubusercontent.com/xzxxn777/Surge/refs/heads/main/Script/BackUp/WuLiangYe/WuLiangYe.sgmodule",
+  "浓五的酒馆": "https://raw.githubusercontent.com/xzxxn777/Surge/refs/heads/main/Script/BackUp/WuLiangYe/WuLiangYe.sgmodule",
+  "Manslaughter": "https://raw.githubusercontent.com/xzxxn777/Surge/refs/heads/main/Rule/Manslaughter.list",
+  "Notice": "https://raw.githubusercontent.com/xzxxn777/Surge/refs/heads/main/Utils/Notice.json",
+  "update_readme.py": "https://raw.githubusercontent.com/xzxxn777/Surge/refs/heads/main/.github/scripts/update_readme.py"
 }
