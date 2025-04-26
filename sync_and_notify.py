@@ -11,6 +11,8 @@ FAILED_LOG_PREFIX = "failed_"
 
 EXTENSION_MAP = {
     ".js": "js",
+    ".sgmodule": "sgmodule",
+    ".plugin": "plugin",
     ".json": "json",
     ".sh": "shell",
     ".py": "python",
