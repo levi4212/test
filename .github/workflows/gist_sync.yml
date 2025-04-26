@@ -4,6 +4,9 @@ on:
   schedule:
     - cron: '0 2 * * *'
   workflow_dispatch:
+  push:                        # 监测文件内容改动
+    paths:
+      - 'script-gist.json' # 监视根目录文件夹script-gist.json内容是否改动
 
 env:
   CLEAN_MODE: true
