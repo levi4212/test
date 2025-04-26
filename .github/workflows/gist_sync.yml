@@ -30,5 +30,10 @@ jobs:
       - name: Install Requests
         run: pip install requests
 
+      - name: Set up Git user
+        run: |
+          git config --global user.email "your-email"
+          git config --global user.name "your-username"          
+
       - name: Run sync_and_notify.py
         run: python3 sync_and_notify.py
