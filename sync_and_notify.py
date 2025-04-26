@@ -1,20 +1,83 @@
 #!/usr/bin/env python3
 import os, json, requests
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
+import re
+from datetime import datetime, timedelta
 
 CONFIG_FILE = "script-gist.json"
 BACKUP_DIR = "SCRIPTS-BACKUP"
+FAILED_DIR = BACKUP_DIR
+FAILED_LOG_PREFIX = "failed_"
+
+EXTENSION_MAP = {
+    ".js": "js",
+    ".json": "json",
+    ".sh": "shell",
+    ".py": "python",
+    ".ts": "typescript",
+    ".html": "html",
+    ".css": "css",
+    ".txt": "txt",
+    ".md": "markdown",
+    ".yml": "yaml",
+    ".yaml": "yaml",
+    ".xml": "xml",
+    ".bat": "bat",
+    ".plist": "plist",
+    ".conf": "conf",
+    ".ini": "ini",
+    ".log": "log"
+}
+
+def get_extension_from_url(url):
+    path = urlparse(url).path
+    match = re.search(r"\.([a-zA-Z0-9]+)$", path)
+    if match:
+        return "." + match.group(1).lower()
+    else:
+        return ".bin"
+
+def get_subdir(ext):
+    return EXTENSION_MAP.get(ext, "other")
+
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
 added, updated, deleted = 0, 0, 0
 updated_files = []
 deleted_files = []
+failed_sync = []
 
 def log(msg): print(f"[GIST-BACKUP] {msg}")
 
+def record_failure(name, url, error_message):
+    today = datetime.now().strftime("%Y-%m-%d")
+    failed_log_file = os.path.join(FAILED_DIR, f"{FAILED_LOG_PREFIX}{today}.log")
+    with open(failed_log_file, "a", encoding="utf-8") as f:
+        f.write(f"[{name}] 对应链接为 {url} ，同步失败 ，状态原因：{error_message}\n")
+
+def clean_old_failed_logs():
+    now = datetime.now()
+    cutoff = now - timedelta(days=30)
+    for fname in os.listdir(FAILED_DIR):
+        if fname.startswith(FAILED_LOG_PREFIX) and fname.endswith(".log"):
+            full_path = os.path.join(FAILED_DIR, fname)
+            try:
+                date_str = fname.replace(FAILED_LOG_PREFIX, "").replace(".log", "")
+                file_date = datetime.strptime(date_str, "%Y-%m-%d")
+                if file_date < cutoff:
+                    os.remove(full_path)
+                    log(f"🧹 Deleted old failed log: {fname}")
+            except:
+                continue
+
 def download_and_compare(name, url):
     global added, updated
-    filename = f"{BACKUP_DIR}/{name}.js"
+    ext = get_extension_from_url(url)
+    subdir = get_subdir(ext)
+    target_dir = os.path.join(BACKUP_DIR, subdir)
+    os.makedirs(target_dir, exist_ok=True)
+    filename = os.path.join(target_dir, f"{name}{ext}")
+
     try:
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
@@ -24,24 +87,29 @@ def download_and_compare(name, url):
                 if f.read() != content:
                     with open(filename, "w", encoding="utf-8") as wf:
                         wf.write(content)
-                    updated_files.append(filename)
+                    updated_files.append((filename, subdir))
                     updated += 1
         else:
             with open(filename, "w", encoding="utf-8") as f:
                 f.write(content)
-            updated_files.append(filename)
+            updated_files.append((filename, subdir))
             added += 1
     except Exception as e:
         log(f"❌ Failed to fetch {name}: {e}")
+        record_failure(name, url, str(e))
 
-def cleanup_files(valid_files):
+def cleanup_files(valid_files_set):
     global deleted, deleted_files
-    for fname in os.listdir(BACKUP_DIR):
-        full_path = os.path.join(BACKUP_DIR, fname)
-        if full_path not in valid_files and fname.endswith(".js"):
-            os.remove(full_path)
-            deleted += 1
-            deleted_files.append(fname)
+    for root, dirs, files in os.walk(BACKUP_DIR):
+        for fname in files:
+            if fname.startswith(FAILED_LOG_PREFIX):
+                continue  # 不清理失败日志
+            full_path = os.path.join(root, fname)
+            if full_path not in valid_files_set:
+                os.remove(full_path)
+                subdir = os.path.relpath(root, BACKUP_DIR)
+                deleted_files.append((full_path, subdir))
+                deleted += 1
 
 def send_bark(title, content, url):
     try:
@@ -80,53 +148,61 @@ def main():
         log("❌ No config file found.")
         return
 
+    clean_old_failed_logs()
+
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
         config = json.load(f)
 
-    valid_files = []
+    valid_files_set = set()
 
     for name, url in config.items():
+        ext = get_extension_from_url(url)
+        subdir = get_subdir(ext)
+        target_dir = os.path.join(BACKUP_DIR, subdir)
+        os.makedirs(target_dir, exist_ok=True)
+        filename = os.path.join(target_dir, f"{name}{ext}")
+        valid_files_set.add(filename)
         download_and_compare(name, url)
-        valid_files.append(f"{BACKUP_DIR}/{name}.js")
 
     if os.getenv("CLEAN_MODE", "true") == "true":
-        cleanup_files(valid_files)
+        cleanup_files(valid_files_set)
 
-    for f in updated_files:
-        os.system(f'git add "{f}" && git commit -m "sync: {os.path.basename(f)}"')
+    for filepath, subdir in updated_files:
+        fname = os.path.basename(filepath)
+        os.system(f'git add "{filepath}"')
+        os.system(f'git commit -m "sync({subdir}): {fname}"')
 
-    for f in deleted_files:
-        os.system(f'git rm "{BACKUP_DIR}/{f}" && git commit -m "removed: {f}"')
+    for filepath, subdir in deleted_files:
+        fname = os.path.basename(filepath)
+        os.system(f'git rm "{filepath}"')
+        os.system(f'git commit -m "sync(remove {subdir}): {fname}"')
 
     if updated_files or deleted_files:
         os.system("git push")
 
+    if os.path.exists("script-gist.json"):
+        os.system("git add script-gist.json")
+        os.system("git diff --cached --quiet || git commit -m 'config: update script-gist.json'")
+        os.system("git push")
+
     notify = os.getenv("FORCE_NOTIFY", "true").lower() == "true" or added or updated or deleted
     if notify:
-        lang = os.getenv("NOTIFY_LANG", "en-us")
-        if lang == "zh-cn":
-            title = "📦 远程脚本自动备份"
-            content = f"✅远程脚本自动备份完成\n🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个"
+        lang = os.getenv("NOTIFY_LANG", "en")
+        if lang == "zh":
+            title = "📦 Gist 自动备份完成"
+            content = f"🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个"
         else:
-            title = "📦 Remote Script Backup"
-            content = f"✅Remote Script Backup Completed\n🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}"
+            title = "📦 Gist Backup Completed"
+            content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}"
 
-        bark_url = os.getenv("BARK_PUSH_URL")
-        if bark_url:
-            send_bark(title, content, bark_url)
-
-        server_key = os.getenv("SERVERCHAN_SEND_KEY")
-        if server_key:
-            send_serverchan(title, content, server_key)
-
-        wechat_hook = os.getenv("WECHAT_WEBHOOK_URL")
-        if wechat_hook:
-            send_wechat(title, content, wechat_hook)
-
-        tg_token = os.getenv("TG_BOT_TOKEN")
-        tg_user = os.getenv("TG_USER_ID")
-        if tg_token and tg_user:
-            send_telegram(title, content, tg_token, tg_user)
+        if url := os.getenv("BARK_PUSH_URL"):
+            send_bark(title, content, url)
+        if key := os.getenv("SERVERCHAN_SEND_KEY"):
+            send_serverchan(title, content, key)
+        if hook := os.getenv("WECHAT_WEBHOOK_URL"):
+            send_wechat(title, content, hook)
+        if os.getenv("TG_BOT_TOKEN") and os.getenv("TG_USER_ID"):
+            send_telegram(title, content, os.getenv("TG_BOT_TOKEN"), os.getenv("TG_USER_ID"))
 
 if __name__ == "__main__":
     main()
