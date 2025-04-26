@@ -21,6 +21,7 @@ EXTENSION_MAP = {
     ".css": "css",
     ".txt": "txt",
     ".md": "markdown",
+    ".list": "list",
     ".yml": "yaml",
     ".yaml": "yaml",
     ".xml": "xml",
@@ -180,7 +181,7 @@ def main():
     for filepath, subdir in deleted_files:
         fname = os.path.basename(filepath)
         os.system(f'git rm "{filepath}"')
-        os.system(f'git commit -m "sync(remove {subdir}): {fname}"')
+        os.system(f'git commit -m "remove ({subdir}): {fname}"')
 
     if updated_files or deleted_files:
         os.system("git push")
@@ -192,12 +193,12 @@ def main():
 
     notify = os.getenv("FORCE_NOTIFY", "true").lower() == "true" or added or updated or deleted
     if notify:
-        lang = os.getenv("NOTIFY_LANG", "en")
-        if lang == "zh":
-            title = "📦 Gist 自动备份完成"
+        lang = os.getenv("NOTIFY_LANG", "en-us")
+        if lang == "zh-cn":
+            title = "📦 远程文件自动备份完成"
             content = f"🆕 新增: {added} 个\n📝 修改: {updated} 个\n🗑️ 删除: {deleted} 个"
         else:
-            title = "📦 Gist Backup Completed"
+            title = "📦 Remote File Backup Completed"
             content = f"🆕 Added: {added}\n📝 Updated: {updated}\n🗑️ Deleted: {deleted}"
 
         if url := os.getenv("BARK_PUSH_URL"):
