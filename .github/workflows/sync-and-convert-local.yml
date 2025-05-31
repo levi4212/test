@@ -33,12 +33,12 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
-      # 3. 设置 Node.js 环境
+      # 3. 设置 Node.js 环境（移除缓存配置）
       - name: 设置 Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-          cache: 'npm'
+          # 移除 cache: 'npm' 这一行，因为当前仓库没有 package-lock.json
 
       # 4. 下载并设置 Script-Hub
       - name: 下载 Script-Hub 后端
