@@ -92,9 +92,9 @@ jobs:
       # -------------------------------------------------------------------
       # 8. （可选）运行 sync-hub.py 同步其它脚本到本地
       #    如果不需要，注释或删除以下三行即可
-      # - name: 运行 sync-hub.py（可选同步步骤）
-      #  run: |
-      #   python .github/scripts/sync-hub.py
+      - name: 运行 sync-hub.py（可选同步步骤）
+        run: |
+         python .github/scripts/sync-hub.py
 
       # -------------------------------------------------------------------
       # 9. 运行本地化转换脚本：convert_hub_local.py
