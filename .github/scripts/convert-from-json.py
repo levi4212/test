@@ -49,8 +49,8 @@ SCRIPT_HUB_API_BASE = "https://script.hub"
 # 4. 要支持的目标平台和对应后缀
 TARGET_PLATFORMS = {
     "Surge": ".sgmodule",
-    "Loon": ".loonmodule",
-    "Shadowrocket": ".shimodule"
+    "Loon": ".plugin",
+    "Shadowrocket": ".sgmodule"
 }
 
 # 5. 若你想排除某些后缀不转换，可在此集合里填写，譬如 .conf/.md/.txt 等
