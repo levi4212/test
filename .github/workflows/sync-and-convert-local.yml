@@ -3,193 +3,403 @@ name: "Sync + 本地化 Script-Hub 转换（增强版，含启动检测）"
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "30 2 * * *"    # 每天 UTC 02:30 自动运行
+    - cron: "0 2 * * *"    # 每天 UTC 02:00 自动运行
   push:
     paths:
       - 'script-hub-list.json'
-      - '.github/scripts/convert_hub_local.py'
-      - '.github/scripts/sync-hub.py'   # 如需同步其它脚本，可保留此项；否则可删除
+      - '.github/workflows/*.yml'
 
 jobs:
-  sync_and_convert:
+  convert_and_host:
     runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write  # 需要写权限来推送文件
 
     env:
-      SCRIPT_HUB_API_BASE: "http://127.0.0.1:9100"
-      GITHUB_RAW_BASE: ${{ secrets.GITHUB_RAW_BASE }}
-      CLEAN_MODE: "true"
-      BARK_PUSH_URL: ${{ secrets.BARK_PUSH_URL }}
-      SERVERCHAN_SEND_KEY: ${{ secrets.SERVERCHAN_SEND_KEY }}
-      WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
-      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-      TG_USER_ID: ${{ secrets.TG_USER_ID }}
-      NOTIFY_LANG: ${{ secrets.NOTIFY_LANG }}
-      FORCE_NOTIFY: ${{ secrets.FORCE_NOTIFY }}
-      BARK_ICON_URL: ${{ secrets.BARK_ICON_URL }}
+      SCRIPT_HUB_PORT: 9100
+      OUTPUT_DIR: "converted-scripts"
 
     steps:
-      # -------------------------------------------------------------------
-      # 1. Checkout：拉取仓库并保留凭据，以便后续 git push 使用 GITHUB_TOKEN
-      - name: Checkout 仓库
-        uses: actions/checkout@v3
+      # 1. 检出代码
+      - name: 检出仓库
+        uses: actions/checkout@v4
         with:
-          persist-credentials: true
+          fetch-depth: 0
 
-      # -------------------------------------------------------------------
-      # 2. 配置 Git 用户信息，避免 "Please tell me who you are" 错误
-      - name: 配置 Git 用户信息
+      # 2. 配置 Git
+      - name: 配置 Git
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
 
-      # -------------------------------------------------------------------
-      # 3. 安装 Node.js（≥18）
-      - name: Setup Node.js 18
-        uses: actions/setup-node@v3
+      # 3. 设置 Node.js 环境
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: '18'
+          cache: 'npm'
 
-      # -------------------------------------------------------------------
-      # 4. Clone Script-Hub 后端到临时目录
-      - name: 拉取 Script-Hub 后端源码
+      # 4. 下载并设置 Script-Hub
+      - name: 下载 Script-Hub 后端
         run: |
-          mkdir -p /tmp/script-hub-backend
-          git clone https://github.com/Script-Hub-Org/Script-Hub.git /tmp/script-hub-backend
-          echo "Script-Hub 后端源码已下载到 /tmp/script-hub-backend"
-
-      # -------------------------------------------------------------------
-      # 5. 启动 Script-Hub 服务（修复版本）
-      - name: 安装 & 启动 Script-Hub 后端
-        run: |
-          cd /tmp/script-hub-backend
+          echo "📥 下载 Script-Hub 源码..."
+          git clone --depth=1 https://github.com/Script-Hub-Org/Script-Hub.git /tmp/script-hub
+          cd /tmp/script-hub
           
-          # 1) 检查 package.json 文件存在
-          if [ ! -f package.json ]; then
-            echo "❌ 未找到 package.json，请检查 Script-Hub 仓库结构"
-            exit 1
+          echo "📦 安装依赖..."
+          npm install --production
+          
+          echo "✅ Script-Hub 后端准备完成"
+
+      # 5. 启动 Script-Hub 服务
+      - name: 启动 Script-Hub 后端
+        run: |
+          cd /tmp/script-hub
+          
+          # 查看可用的启动命令
+          echo "📋 检查 package.json 脚本..."
+          if [ -f package.json ]; then
+            npm run 2>&1 | grep -E "^  " || echo "未找到预定义脚本"
           fi
           
-          # 2) 安装依赖 (使用 npm 而不是 pnpm，避免额外依赖)
-          echo "📦 安装依赖..."
-          npm install
+          # 查找主入口文件
+          MAIN_FILE=""
+          if [ -f package.json ] && grep -q '"main"' package.json; then
+            MAIN_FILE=$(node -e "console.log(require('./package.json').main || '')")
+          fi
           
-          # 3) 检查可用的启动命令
-          echo "📋 package.json 中的 scripts:"
-          cat package.json | grep -A 10 '"scripts"'
-          
-          # 4) 尝试启动服务 (根据实际的 Script-Hub 项目调整启动命令)
-          echo "🚀 启动 Script-Hub 后端..."
-          
-          # 方式1: 如果有 start 命令
-          if npm run | grep -q "start"; then
+          # 按优先级尝试启动
+          echo "🚀 启动 Script-Hub 服务..."
+          if npm run start --if-present 2>/dev/null; then
+            echo "使用 npm start 启动"
             nohup npm start > /tmp/script-hub.log 2>&1 &
-          # 方式2: 如果有 serve 命令  
-          elif npm run | grep -q "serve"; then
-            nohup npm run serve > /tmp/script-hub.log 2>&1 &
-          # 方式3: 直接运行主文件 (需要根据实际项目调整)
-          elif [ -f app.js ]; then
+          elif [ -n "$MAIN_FILE" ] && [ -f "$MAIN_FILE" ]; then
+            echo "使用主文件启动: $MAIN_FILE"
+            nohup node "$MAIN_FILE" > /tmp/script-hub.log 2>&1 &
+          elif [ -f "app.js" ]; then
+            echo "使用 app.js 启动"
             nohup node app.js > /tmp/script-hub.log 2>&1 &
-          elif [ -f index.js ]; then
+          elif [ -f "index.js" ]; then
+            echo "使用 index.js 启动"
             nohup node index.js > /tmp/script-hub.log 2>&1 &
-          elif [ -f server.js ]; then
+          elif [ -f "server.js" ]; then
+            echo "使用 server.js 启动"
             nohup node server.js > /tmp/script-hub.log 2>&1 &
           else
-            echo "❌ 无法确定启动方式，请检查 Script-Hub 项目"
+            echo "❌ 无法找到启动入口"
+            ls -la
             exit 1
           fi
           
-          # 获取后台进程PID
-          SERVER_PID=$!
-          echo "Script-Hub 后端 PID: $SERVER_PID"
-          
-          # 5) 等待服务启动并检测（最多等 60 秒）
-          echo "⌛ 等待服务启动..."
-          for i in {1..12}; do
-            sleep 5
-            echo "检测第 $i 次..."
-            
-            # 检查进程是否还在运行
-            if ! kill -0 $SERVER_PID 2>/dev/null; then
-              echo "❌ Script-Hub 进程已退出，查看日志:"
-              cat /tmp/script-hub.log
-              exit 1
-            fi
-            
-            # 检查服务是否响应 (尝试不同的健康检查端点)
-            if curl -f -s http://127.0.0.1:9100/ > /dev/null 2>&1; then
-              echo "✅ Script-Hub 后端已启动 (端口 9100)"
+          # 等待服务启动
+          echo "⏳ 等待服务启动..."
+          for i in {1..30}; do
+            sleep 2
+            if curl -s http://127.0.0.1:$SCRIPT_HUB_PORT >/dev/null 2>&1; then
+              echo "✅ Script-Hub 服务已启动 (端口 $SCRIPT_HUB_PORT)"
               break
-            elif curl -f -s http://127.0.0.1:9100/health > /dev/null 2>&1; then
-              echo "✅ Script-Hub 后端已启动 (端口 9100, /health)"
-              break  
-            elif curl -f -s http://127.0.0.1:9100/api > /dev/null 2>&1; then
-              echo "✅ Script-Hub 后端已启动 (端口 9100, /api)"
+            elif curl -s http://127.0.0.1:$SCRIPT_HUB_PORT/health >/dev/null 2>&1; then
+              echo "✅ Script-Hub 服务已启动 (端口 $SCRIPT_HUB_PORT)"
               break
             fi
             
-            if [ $i -eq 12 ]; then
-              echo "❌ Script-Hub 后端启动超时，查看日志:"
-              cat /tmp/script-hub.log
-              echo "尝试直接测试连接:"
-              curl -v http://127.0.0.1:9100/ || true
+            if [ $i -eq 30 ]; then
+              echo "❌ 服务启动超时"
+              echo "=== 服务日志 ==="
+              cat /tmp/script-hub.log 2>/dev/null || echo "无日志文件"
+              echo "=== 网络检查 ==="
+              netstat -tlnp | grep :$SCRIPT_HUB_PORT || echo "端口未监听"
               exit 1
             fi
             
-            echo "等待中... ($i/12)"
+            echo "等待中... ($i/30)"
           done
-          
-          echo "🎉 Script-Hub 后端启动成功!"
 
-      # -------------------------------------------------------------------
-      # 6. 安装 Python，用于执行转换脚本
-      - name: Setup Python 3.9
+      # 6. 设置 Python 环境
+      - name: 设置 Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.9"
+          python-version: '3.9'
 
-      # -------------------------------------------------------------------
-      # 7. 安装 Python 依赖 requests
+      # 7. 安装 Python 依赖
       - name: 安装 Python 依赖
         run: |
           python -m pip install --upgrade pip
-          pip install requests
+          pip install requests urllib3
 
-      # -------------------------------------------------------------------
-      # 8. （可选）运行 sync-hub.py 同步其它脚本到本地
-      #    如果不需要，注释或删除以下三行即可
-      - name: 运行 sync-hub.py（可选同步步骤）
+      # 8. 执行转换脚本
+      - name: 执行脚本转换
         run: |
-          if [ -f .github/scripts/sync-hub.py ]; then
-            python .github/scripts/sync-hub.py
+          python3 << 'EOF'
+          import os
+          import json
+          import requests
+          import hashlib
+          import subprocess
+          from pathlib import Path
+          from urllib.parse import quote_plus
+          import time
+
+          # 配置
+          JSON_CONFIG = "script-hub-list.json"
+          OUTPUT_DIR = "converted-scripts"
+          API_BASE = "http://127.0.0.1:9100"
+          
+          # 目标平台配置
+          PLATFORMS = {
+              "Surge": ".sgmodule",
+              "Loon": ".plugin", 
+              "Shadowrocket": ".shimodule",
+              "Stash": ".stoverride",
+              "Plain": ".txt"
+          }
+
+          def log(msg):
+              print(f"[转换器] {msg}")
+
+          def compute_hash(filepath):
+              """计算文件 SHA256 哈希"""
+              sha256_hash = hashlib.sha256()
+              with open(filepath, "rb") as f:
+                  for chunk in iter(lambda: f.read(4096), b""):
+                      sha256_hash.update(chunk)
+              return sha256_hash.hexdigest()
+
+          def convert_script(name, url, platform):
+              """转换单个脚本"""
+              try:
+                  # 构造 API URL
+                  api_url = f"{API_BASE}/file/{platform}/{quote_plus(url)}"
+                  
+                  # 发送请求
+                  response = requests.get(api_url, timeout=30)
+                  response.raise_for_status()
+                  
+                  return response.content
+              except Exception as e:
+                  log(f"❌ 转换失败 [{platform}] {name}: {e}")
+                  return None
+
+          def main():
+              # 检查配置文件
+              if not os.path.exists(JSON_CONFIG):
+                  log(f"❌ 配置文件不存在: {JSON_CONFIG}")
+                  return False
+
+              # 读取配置
+              try:
+                  with open(JSON_CONFIG, 'r', encoding='utf-8') as f:
+                      scripts = json.load(f)
+              except Exception as e:
+                  log(f"❌ 读取配置失败: {e}")
+                  return False
+
+              if not isinstance(scripts, list):
+                  log("❌ 配置文件格式错误，应为数组")
+                  return False
+
+              # 创建输出目录
+              Path(OUTPUT_DIR).mkdir(exist_ok=True)
+              for platform in PLATFORMS.keys():
+                  Path(OUTPUT_DIR, platform).mkdir(exist_ok=True)
+
+              # 记录变更
+              changes = []
+              
+              # 处理每个脚本
+              for script in scripts:
+                  name = script.get('name')
+                  url = script.get('url')
+                  
+                  if not name or not url:
+                      log(f"⚠️ 跳过无效配置: {script}")
+                      continue
+                  
+                  log(f"🔄 处理脚本: {name}")
+                  
+                  # 转换到各个平台
+                  for platform, ext in PLATFORMS.items():
+                      output_file = Path(OUTPUT_DIR, platform, f"{name}{ext}")
+                      
+                      # 转换脚本
+                      content = convert_script(name, url, platform)
+                      if content is None:
+                          continue
+                      
+                      # 检查是否需要更新
+                      should_update = True
+                      if output_file.exists():
+                          old_hash = compute_hash(output_file)
+                          # 写入临时文件计算新哈希
+                          temp_file = output_file.with_suffix(f"{ext}.tmp")
+                          with open(temp_file, 'wb') as f:
+                              f.write(content)
+                          new_hash = compute_hash(temp_file)
+                          
+                          if old_hash == new_hash:
+                              temp_file.unlink()  # 删除临时文件
+                              should_update = False
+                              log(f"⏭️  无变化 [{platform}] {name}")
+                          else:
+                              temp_file.replace(output_file)  # 替换原文件
+                              changes.append(f"update({platform}): {name}{ext}")
+                              log(f"✅ 更新 [{platform}] {name}")
+                      else:
+                          # 新文件
+                          with open(output_file, 'wb') as f:
+                              f.write(content)
+                          changes.append(f"add({platform}): {name}{ext}")
+                          log(f"➕ 新增 [{platform}] {name}")
+
+              # 提交变更
+              if changes:
+                  try:
+                      subprocess.run(['git', 'add', OUTPUT_DIR], check=True)
+                      commit_msg = f"自动转换更新 ({len(changes)} 个文件)\n\n" + "\n".join(changes)
+                      subprocess.run(['git', 'commit', '-m', commit_msg], check=True)
+                      log(f"✅ 提交了 {len(changes)} 个变更")
+                      return True
+                  except subprocess.CalledProcessError as e:
+                      log(f"❌ Git 操作失败: {e}")
+                      return False
+              else:
+                  log("ℹ️  没有检测到变更")
+                  return True
+
+          if __name__ == "__main__":
+              success = main()
+              if not success:
+                  exit(1)
+          EOF
+
+      # 9. 推送变更
+      - name: 推送更新
+        run: |
+          if git diff --staged --quiet; then
+            echo "📝 没有变更需要推送"
           else
-            echo "sync-hub.py 不存在，跳过此步骤"
+            echo "📤 推送变更到仓库..."
+            git push
+            echo "✅ 推送完成"
           fi
 
-      # -------------------------------------------------------------------
-      # 9. 运行本地化转换脚本：convert_hub_local.py
-      - name: 从 JSON 转换并推送
+      # 10. 生成使用指南
+      - name: 生成使用指南
         run: |
-          python .github/scripts/convert_hub_local.py
+          if [ -d "$OUTPUT_DIR" ]; then
+            echo "📊 生成使用指南..."
+            python3 << 'EOF'
+          import os
+          import json
+          from pathlib import Path
 
-      # -------------------------------------------------------------------
-      # 10. （可选）检查输出目录结构，便于在 Actions 日志中查看
-      - name: 打印 SCRIPT-HUB-OUTPUT 目录
-        run: |
-          echo "---- SCRIPT-HUB-OUTPUT 目录 ----"
-          if [ -d "SCRIPT-HUB-OUTPUT" ]; then
-            find SCRIPT-HUB-OUTPUT -maxdepth 3 | sed 's/^/  /'
-          else
-            echo "  SCRIPT-HUB-OUTPUT 目录不存在"
+          OUTPUT_DIR = "converted-scripts"
+          REPO_URL = os.environ.get('GITHUB_SERVER_URL', 'https://github.com') + '/' + os.environ.get('GITHUB_REPOSITORY', '')
+          BRANCH = os.environ.get('GITHUB_REF_NAME', 'main')
+
+          # 读取脚本列表
+          scripts = []
+          if os.path.exists('script-hub-list.json'):
+              with open('script-hub-list.json', 'r', encoding='utf-8') as f:
+                  scripts = json.load(f)
+
+          # 生成 README
+          readme_content = f"""# Script-Hub 转换结果
+
+          本仓库自动转换脚本为各平台格式，每日自动更新。
+
+          ## 📱 支持平台
+
+          - **Surge**: `.sgmodule` 格式
+          - **Loon**: `.plugin` 格式  
+          - **Shadowrocket**: `.shimodule` 格式
+          - **Stash**: `.stoverride` 格式
+          - **Plain**: `.txt` 纯文本格式
+
+          ## 🔗 使用方法
+
+          直接复制下方对应平台的 Raw 链接到你的代理工具中：
+
+          """
+
+          for script in scripts:
+              name = script.get('name', '')
+              if not name:
+                  continue
+                  
+              readme_content += f"\n### {name}\n\n"
+              
+              platforms = {
+                  "Surge": ".sgmodule",
+                  "Loon": ".plugin", 
+                  "Shadowrocket": ".shimodule",
+                  "Stash": ".stoverride",
+                  "Plain": ".txt"
+              }
+              
+              for platform, ext in platforms.items():
+                  file_path = f"{OUTPUT_DIR}/{platform}/{name}{ext}"
+                  if os.path.exists(file_path):
+                      raw_url = f"{REPO_URL}/raw/{BRANCH}/{file_path}"
+                      readme_content += f"- **{platform}**: [`{name}{ext}`]({raw_url})\n"
+
+          readme_content += f"""
+          ## 🔄 更新频率
+
+          - 每日 UTC 02:00 自动检查更新
+          - 脚本源文件变更时自动触发转换
+          - 支持手动触发转换
+
+          ## 📋 脚本列表
+
+          当前转换的脚本数量: **{len(scripts)}** 个
+
+          ---
+          
+          *最后更新: $(date -u '+%Y-%m-%d %H:%M:%S UTC')*
+          *由 GitHub Actions 自动生成*
+          """
+
+          # 写入 README
+          with open(f'{OUTPUT_DIR}/README.md', 'w', encoding='utf-8') as f:
+              f.write(readme_content)
+
+          print("✅ 使用指南已生成")
+          EOF
           fi
 
-      # -------------------------------------------------------------------
-      # 11. 显示 Script-Hub 日志（调试用）
-      - name: 显示 Script-Hub 日志
+      # 11. 显示结果统计
+      - name: 显示转换结果
+        run: |
+          echo "📊 转换结果统计:"
+          if [ -d "$OUTPUT_DIR" ]; then
+            for platform in Surge Loon Shadowrocket Stash Plain; do
+              if [ -d "$OUTPUT_DIR/$platform" ]; then
+                count=$(find "$OUTPUT_DIR/$platform" -name "*.*" -type f | wc -l)
+                echo "  $platform: $count 个文件"
+              fi
+            done
+            
+            echo ""
+            echo "🔗 Raw 文件访问基础 URL:"
+            echo "  https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_REF_NAME/$OUTPUT_DIR/"
+            
+            echo ""
+            echo "📁 目录结构:"
+            tree "$OUTPUT_DIR" 2>/dev/null || find "$OUTPUT_DIR" -type f | head -20
+          else
+            echo "❌ 输出目录不存在"
+          fi
+
+      # 12. 清理和错误处理
+      - name: 清理临时文件
         if: always()
         run: |
-          echo "---- Script-Hub 服务日志 ----"
+          echo "🧹 清理临时文件..."
+          rm -rf /tmp/script-hub* 2>/dev/null || true
+          
           if [ -f /tmp/script-hub.log ]; then
-            cat /tmp/script-hub.log
-          else
-            echo "日志文件不存在"
+            echo "📋 Script-Hub 服务日志:"
+            tail -50 /tmp/script-hub.log
           fi
