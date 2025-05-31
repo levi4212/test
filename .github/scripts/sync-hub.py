@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 # ========== 脚本配置 ==========
 # 配置文件路径（请保证受版本控制）
-CONFIG_FILE = "script-h-gist.json"
+CONFIG_FILE = "script-hub-list.json"
 # 备份目录
 BACKUP_DIR = "SCRIPTS-h-BACKUP"
 # 失败日志目录与前缀
