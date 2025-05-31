@@ -1,0 +1,112 @@
+# 文件路径：.github/workflows/sync-and-convert-local.yml
+
+name: "Sync + 本地化 Script-Hub 转换（无须自建服务器）"
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "30 2 * * *"    # 每天 UTC 02:30 自动运行
+  push:
+    paths:
+      - 'script-hub-list.json'
+      - '.github/scripts/convert_hub_local.py'
+      - '.github/scripts/sync-hub.py'   # 如需同步其它脚本，可放行此项
+
+jobs:
+  sync_and_convert:
+    runs-on: ubuntu-latest
+
+    env:
+      # 本地 Script-Hub 服务地址
+      SCRIPT_HUB_API_BASE: "http://127.0.0.1:9100"
+      # 如果 JSON 中写的是相对路径，需要提供 GitHub Raw 前缀
+      # 请在 Repository Settings → Secrets ← 添加一个 GITHUB_RAW_BASE
+      GITHUB_RAW_BASE: ${{ secrets.GITHUB_RAW_BASE }}
+      # CLEAN_MODE 设为 "true" 会自动删除 OUTPUT_DIR 中 JSON 列表以外的旧文件
+      CLEAN_MODE: "true"
+
+      # 如果你想保留 sync-hub.py 中的通知逻辑，可将：
+      BARK_PUSH_URL: ${{ secrets.BARK_PUSH_URL }}
+      SERVERCHAN_SEND_KEY: ${{ secrets.SERVERCHAN_SEND_KEY }}
+      WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      TG_USER_ID: ${{ secrets.TG_USER_ID }}
+      NOTIFY_LANG: ${{ secrets.NOTIFY_LANG }}
+      FORCE_NOTIFY: ${{ secrets.FORCE_NOTIFY }}
+      BARK_ICON_URL: ${{ secrets.BARK_ICON_URL }}
+
+    steps:
+      # -------------------------------------------------------------------
+      # 1. Checkout：拉取仓库并保留凭据，以便后续 git push
+      - name: Checkout 仓库
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: true
+
+      # -------------------------------------------------------------------
+      # 2. 安装 Node.js（Script-Hub 后端需要）
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "16"
+
+      # -------------------------------------------------------------------
+      # 3. Clone 或更新 Script-Hub 后端仓库
+      - name: 拉取 Script-Hub 后端源码
+        run: |
+          if [ ! -d ".github/scripts/script-hub-backend" ]; then
+            git clone https://github.com/Script-Hub-Org/Script-Hub.git .github/scripts/script-hub-backend
+          else
+            cd .github/scripts/script-hub-backend && git pull
+          fi
+
+      # -------------------------------------------------------------------
+      # 4. 进入后端目录并安装依赖、编译
+      - name: 安装 & 编译 Script-Hub 后端
+        run: |
+          cd .github/scripts/script-hub-backend
+          npm install -g pnpm        # 安装 pnpm（若 Runner 无预装）
+          pnpm install               # 安装依赖
+          pnpm run build             # 编译
+
+      # -------------------------------------------------------------------
+      # 5. 后台启动本地 Script-Hub 服务 (监听 9100)
+      - name: 启动 Script-Hub 后端 (后台运行)
+        run: |
+          cd .github/scripts/script-hub-backend
+          nohup pnpm start --port=9100 >/dev/null 2>&1 &
+          sleep 5   # 等待后端完全启动
+
+      # -------------------------------------------------------------------
+      # 6. 安装 Python，用于执行转换脚本
+      - name: Setup Python 3.9
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+
+      # -------------------------------------------------------------------
+      # 7. 安装 Python 依赖 requests
+      - name: 安装 Python 依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      # -------------------------------------------------------------------
+      # 8. （可选）运行 sync-hub.py 同步其它脚本到本地
+      #    如不需要，请注释或删除下面三行
+      - name: 运行 sync-hub.py（可选同步步骤）
+        run: |
+          python .github/scripts/sync-hub.py
+
+      # -------------------------------------------------------------------
+      # 9. 运行本地化转换脚本：convert_hub_local.py
+      - name: 从 JSON 转换并推送
+        run: |
+          python .github/scripts/convert_hub_local.py
+
+      # -------------------------------------------------------------------
+      # 10. （可选）检查输出目录结构
+      - name: 打印 SCRIPT-HUB-OUTPUT 目录
+        run: |
+          echo "---- SCRIPT-HUB-OUTPUT 目录 ----"
+          find SCRIPT-HUB-OUTPUT -maxdepth 3 | sed 's/^/  /'
