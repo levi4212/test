@@ -1,0 +1,75 @@
+name: "Sync-from-JSON + Serverless Script-Hub 转换"
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "30 2 * * *"    # 每天 UTC 02:30 自动运行
+  push:
+    paths:
+      - 'script-hub-list.json'
+      - '.github/scripts/convert-from-json.py'
+      - '.github/scripts/sync-hub.py'     # 如果你还想继续同步其它原始脚本，可以结合使用
+
+jobs:
+  convert_from_json:
+    runs-on: ubuntu-latest
+
+    env:
+      # JSON 里的链接如果是相对路径，你可以设置 Raw 前缀
+      # 例如：https://raw.githubusercontent.com/你的用户名/你的仓库/main/
+      GITHUB_RAW_BASE: ${{ secrets.GITHUB_RAW_BASE }}
+      # 清理模式：CLEAN_MODE="true" 会自动删除多余输出文件
+      CLEAN_MODE: "true"
+
+      # 如果你仍然希望保留“以前的 sync-hub.py 同步逻辑”（提前把外部脚本下载到仓库），
+      # workflow 里也可以执行它。下例把它放在了同一次 job 里，步骤 3 运行 “sync-hub.py” ； 
+      # 如果不需要，只要把相关步骤删掉即可。
+      BARK_PUSH_URL: ${{ secrets.BARK_PUSH_URL }}
+      SERVERCHAN_SEND_KEY: ${{ secrets.SERVERCHAN_SEND_KEY }}
+      WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      TG_USER_ID: ${{ secrets.TG_USER_ID }}
+      NOTIFY_LANG: ${{ secrets.NOTIFY_LANG }}
+      FORCE_NOTIFY: ${{ secrets.FORCE_NOTIFY }}
+      BARK_ICON_URL: ${{ secrets.BARK_ICON_URL }}
+
+    steps:
+      # -------------------------------------------------------------------
+      # 1. Checkout：把仓库拉下来，并保留凭据以便后面直接 git push
+      - name: Checkout 仓库
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      # -------------------------------------------------------------------
+      # 2. Setup Python 环境
+      - name: Setup Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      # -------------------------------------------------------------------
+      # 3. （可选）如果你还想先执行“sync-hub.py”，把 JSON 以外的外链脚本下载到仓库，可以加上：
+      # - name: 运行 sync-hub.py 同步其它脚本
+      #   run: |
+      #     python .github/scripts/sync-hub.py
+
+      # -------------------------------------------------------------------
+      # 4. 安装 requests 库
+      - name: 安装 Python 依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      # -------------------------------------------------------------------
+      # 5. 执行 “从 JSON 转换” 脚本
+      - name: 从 JSON 自动转换脚本
+        run: |
+          python .github/scripts/convert-from-json.py
+
+      # -------------------------------------------------------------------
+      # 6. （可选）打印输出目录结构，方便在 Actions 日志里查看结果
+      - name: 查看 SCRIPT-HUB-OUTPUT 目录
+        run: |
+          echo "---- SCRIPT-HUB-OUTPUT 目录 ----"
+          find SCRIPT-HUB-OUTPUT -maxdepth 3 | sed 's/^/  /'
