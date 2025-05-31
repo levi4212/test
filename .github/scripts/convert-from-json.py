@@ -3,21 +3,33 @@
 """
 convert-from-json.py
 
-Serverless 版“从 JSON 配置读取链接并自动交给 script.hub 转换”脚本：
-  • 读取根目录下的 script-hub-list.json，列表项格式为：
-      [
-        { "name": "...", "url": "...", ("headers": { ... }) },
-        …
-      ]
-  • 对每个条目，直接调用 script.hub 的在线转换接口：
-      https://script.hub/file/<Platform>/<URL_ENCODED原始链接>
-  • 生成 Surge(.sgmodule)、Loon(.loonmodule)、Shadowrocket(.shimodule) 三种文件
-  • 保存到本地仓库：SCRIPT-HUB-OUTPUT/Surge/<name>.sgmodule、
-                      SCRIPT-HUB-OUTPUT/Loon/<name>.loonmodule、
-                      SCRIPT-HUB-OUTPUT/Shadowrocket/<name>.shimodule
-  • 对“新增/更新”文件逐条 git add + git commit，按格式 “sync(<平台>): <文件名>”
-  • 对“已删除”文件逐条 git rm + git commit，按格式 “remove(<平台>): <文件名>”
-  • 最后如果有任何变更，执行 git push
+功能：从根目录下的 script-hub-list.json 读取每条「name + URL (+ 可选 headers)」
+并通过 Script-Hub 官方在线转换接口（Serverless 模式）生成各平台可导入的模块文件，
+包括 Surge (.sgmodule)、Loon (.plugin/.loonmodule)、Shadowrocket (.shimodule)、Stash (.stoverride) 等，
+将结果保存到 SCRIPT-HUB-OUTPUT/<平台>/ 目录下，并自动执行增量的 Git 提交与推送。
+
+使用方式：
+  1. 将本脚本放置在仓库的 .github/scripts/convert-from-json.py 路径下
+  2. 在仓库根目录创建 script-hub-list.json，内容格式如下：
+     [
+       {
+         "name": "foo-rule",
+         "url":  "https://raw.githubusercontent.com/you/your-repo/main/scripts/foo-rule.js"
+       },
+       {
+         "name": "bar-plugin",
+         "url":  "https://raw.githubusercontent.com/other/another-repo/master/bar.plugin",
+         "headers": {
+           "User-Agent": "MyAgent/1.0"
+         }
+       }
+       // … 可继续添加多条记录
+     ]
+  3. （可选）如果 JSON 中写的是相对路径，请在 GitHub Actions Workflow 中设置环境变量：
+       GITHUB_RAW_BASE=https://raw.githubusercontent.com/你的用户名/你的仓库/main/
+  4. 在 GitHub Actions Workflow 中运行：
+       python .github/scripts/convert-from-json.py
+  5. 脚本会自动对新增/更新/删除的输出文件执行 git add/commit/push，无需手动操作。
 """
 
 import os
@@ -29,53 +41,58 @@ import subprocess
 from urllib.parse import quote_plus
 from datetime import datetime
 
-# ━━━━━━━━ 配置区域 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ─────────────────────────────────────────────────────────────────────────────
+#                                 配置区域
+# ─────────────────────────────────────────────────────────────────────────────
 
-# 1. JSON 配置文件路径（相对于仓库根目录）
+# JSON 配置文件（脚本列表），必须放在仓库根目录
 JSON_CONFIG = "script-hub-list.json"
 
-# 2. 输出目录（如果不存在则自动创建）
-#    最终会在仓库里看到：
-#      SCRIPT-HUB-OUTPUT/
-#        ├── Surge/
-#        ├── Loon/
-#        └── Shadowrocket/
+# 转换后模块的输出根目录
 OUTPUT_DIR = "SCRIPT-HUB-OUTPUT"
 
-# 3. script.hub Serverless 公共接口前缀（直接调用无需本地服务）
-#    官方一般是 https://script.hub 或 http://script.hub
+# Script-Hub 官方公共接口前缀（无需本地服务），使用 HTTPS 以避免跨域
 SCRIPT_HUB_API_BASE = "https://script.hub"
 
-# 4. 要支持的目标平台和对应后缀
+# 目标平台及对应输出后缀映射，key = 平台名称，value = 目标文件后缀
 TARGET_PLATFORMS = {
-    "Surge": ".sgmodule",
-    "Loon": ".plugin",
-    "Shadowrocket": ".sgmodule"
+    "Surge":      ".sgmodule",
+    "Loon":       ".plugin",      # 也可以改成 ".loonmodule"
+    "Shadowrocket": ".shimodule",
+    "Stash":      ".stoverride",
+    "Plain":      ".txt"          # 如果需要保留原始纯文本，可添加此项
 }
 
-# 5. 若你想排除某些后缀不转换，可在此集合里填写，譬如 .conf/.md/.txt 等
+# 排除不想转换的源文件后缀（例如 .md/.txt/.conf 等纯文档格式）
 EXCLUDE_EXTS = {".md", ".txt", ".conf", ".ini", ".yaml", ".yml"}
 
-# 6. 是否自动删除不在 JSON 列表中的旧输出文件
-#    如设为 “true”，脚本会把 OUTPUT_DIR 下“多余”的旧文件清掉
+# 是否启用“清理模式”，如果为 True，则会删除 OUTPUT_DIR 下那些不在 JSON 列表里的旧输出文件
 CLEAN_MODE = os.getenv("CLEAN_MODE", "false").lower() == "true"
 
-# 7. （可选）GitHub Raw 前缀，用于“原始链接”不是 GitHub Raw 时，可自己拼接
-#    但通常 JSON 里就直接写明了“GitHub Raw URL”，不需要再拼。可不填。
+# （可选）GitHub Raw 前缀，用于拼接“非 http 开头”的相对路径
+# 例如： "https://raw.githubusercontent.com/你的用户名/你的仓库/main/"
 GITHUB_RAW_BASE = os.getenv("GITHUB_RAW_BASE", "")
 
-# ━━━━━━━━ 工具函数 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ─────────────────────────────────────────────────────────────────────────────
+#                                辅助函数
+# ─────────────────────────────────────────────────────────────────────────────
 
 def log(msg: str):
-    """简单日志"""
+    """
+    控制台打印日志，方便在 GitHub Actions 中查看
+    """
     print(f"[convert-from-json] {msg}")
 
 def ensure_dir(path: str):
-    """如果目录不存在就创建"""
+    """
+    如果目录不存在，则创建（包括所有父目录）
+    """
     os.makedirs(path, exist_ok=True)
 
 def compute_sha1(path: str) -> str:
-    """计算文件内容 SHA1，用于判断是否需要覆盖"""
+    """
+    计算文件内容的 SHA1 值，用于判断本地文件是否与最新内容相同
+    """
     h = hashlib.sha1()
     with open(path, "rb") as f:
         while True:
@@ -85,13 +102,18 @@ def compute_sha1(path: str) -> str:
             h.update(chunk)
     return h.hexdigest()
 
-def fetch_and_save(api_url: str, out_file: str) -> bool:
+def fetch_and_save(api_url: str, out_file: str, headers: dict = None) -> bool:
     """
-    调用 script.hub 公共接口，下载转换结果并写出到 out_file。
-    返回 True 表示成功，False 表示失败（并删除残留文件）。
+    向 Script-Hub 官方接口发起 GET 请求，把返回的内容写入 out_file。
+    - api_url: 完整的转换接口 URL，例如：
+        https://script.hub/file/Surge/<URL_ENCODE(raw_url)>
+    - out_file: 本地输出路径
+    - headers: 可选字典，传递给 requests.get 的自定义请求头
+    返回 True 表示成功写入，False 表示失败（同时删除残留的 str 文件）。
     """
+    headers = headers or {}
     try:
-        resp = requests.get(api_url, timeout=20)
+        resp = requests.get(api_url, headers=headers, timeout=20)
         resp.raise_for_status()
         with open(out_file, "wb") as f:
             f.write(resp.content)
@@ -99,17 +121,23 @@ def fetch_and_save(api_url: str, out_file: str) -> bool:
     except Exception as e:
         log(f"❌ 转换失败: {api_url} | {e}")
         if os.path.exists(out_file):
-            os.remove(out_file)
+            try:
+                os.remove(out_file)
+            except:
+                pass
         return False
 
-# ━━━━━━━━ 主流程 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ─────────────────────────────────────────────────────────────────────────────
+#                                 主流程函数
+# ─────────────────────────────────────────────────────────────────────────────
 
 def main():
-    # 1. 读取并解析 JSON 配置
+    # 1. 检查 JSON 配置文件是否存在
     if not os.path.exists(JSON_CONFIG):
         log(f"❌ 找不到配置文件: {JSON_CONFIG}")
         sys.exit(1)
 
+    # 2. 读取并解析 JSON
     try:
         with open(JSON_CONFIG, "r", encoding="utf-8") as f:
             items = json.load(f)
@@ -118,46 +146,49 @@ def main():
         sys.exit(1)
 
     if not isinstance(items, list):
-        log("❌ JSON 内容必须是一个列表，每项包含 {\"name\":..., \"url\":..., (可选)\"headers\":{…}}")
+        log("❌ JSON 文件顶层必须是一个数组，内部每项为 {\"name\":..., \"url\":..., (可选)\"headers\":{...}}")
         sys.exit(1)
 
-    # 2. 确保输出根目录存在
+    # 3. 确保输出目录存在
     ensure_dir(OUTPUT_DIR)
 
-    # 3. 准备记录“应当保留”的输出文件集合，以及新增/更新/删除列表
+    # 4. 准备记录“本次执行需要保留”的所有输出文件路径
     should_keep = set()
-    updated_files = []  # 存放 (outfile_path, "Platform")
-    deleted_files = []  # 存放 (outfile_path, "Platform")
 
-    # 4. 遍历 JSON 列表，分别进行 Serverless 转换
+    # 5. 准备记录“新增/更新”和“删除”操作，用于后续的 Git 提交
+    updated_files = []  # [(filepath, platform), ...]
+    deleted_files = []  # [(filepath, platform), ...]
+
+    # 6. 遍历 JSON 列表，每条记录做转换
     for entry in items:
         name = entry.get("name")
         url = entry.get("url")
         headers = entry.get("headers", {}) or {}
 
         if not name or not url:
-            log(f"⚠️ 跳过无效配置项: {entry}")
+            log(f"⚠️ 跳过无效 JSON 条目: {entry}")
             continue
 
-        # 如果只写了非 Raw 链接且提供了 GITHUB_RAW_BASE，可帮忙拼一下
-        if not url.startswith("http") and GITHUB_RAW_BASE:
+        # 如果 url 不是以 http/https 开头，且设置了 GITHUB_RAW_BASE，则拼接
+        if not (url.startswith("http://") or url.startswith("https://")) and GITHUB_RAW_BASE:
             url = GITHUB_RAW_BASE.rstrip("/") + "/" + url.lstrip("/")
 
-        # 提取后缀: 例如 foo.js → ".js"
-        ext = os.path.splitext(url.split("?", 1)[0])[1].lower()
-        # 如果在排除后缀里就跳过
+        # 提取 URL 中的文件后缀（不含查询参数），如 ".js"、".plugin"
+        ext = os.path.splitext(url.split('?', 1)[0])[1].lower()
+
+        # 如果在排除后缀列表里，就跳过
         if ext in EXCLUDE_EXTS:
-            log(f"⏭️ 跳过不需要转换的后缀: {url}")
+            log(f"⏭️ 跳过排除后缀 ({ext}): {url}")
             continue
 
-        # 对每个目标平台生成对应的转换输出
+        # 对各个目标平台进行转换
         for platform, suffix in TARGET_PLATFORMS.items():
-            # 准备输出目录： e.g. SCRIPT-HUB-OUTPUT/Surge/
+            # 准备对应的输出子目录： e.g. SCRIPT-HUB-OUTPUT/Surge/
             out_subdir = os.path.join(OUTPUT_DIR, platform)
             ensure_dir(out_subdir)
 
-            # 拼 Script-Hub 服务接口
-            # 如: https://script.hub/file/Surge/<URL_ENCODE(raw_url)>
+            # 构造 Script-Hub 转换 API URL
+            # 形如：https://script.hub/file/Surge/<URL_ENCODE(raw_url)>
             api_url = f"{SCRIPT_HUB_API_BASE}/file/{platform}/{quote_plus(url)}"
 
             # 输出文件名： e.g. foo-rule.sgmodule
@@ -165,84 +196,88 @@ def main():
             out_path = os.path.join(out_subdir, out_fname)
             should_keep.add(os.path.normpath(out_path))
 
-            # 如果输出已存在，先比对 SHA1 决定是否覆盖
+            # 如果目标文件已存在，需要先比较 SHA1 判断是否需要更新
             if os.path.exists(out_path):
                 old_sha1 = compute_sha1(out_path)
-                tmp_path = out_path + ".tmp"
-                # 由于需要传递自定义 headers，使用 requests.get(url, headers=headers)
-                try:
-                    # 获取转换结果流
-                    resp = requests.get(api_url, headers=headers, timeout=20)
-                    resp.raise_for_status()
-                    with open(tmp_path, "wb") as tf:
-                        tf.write(resp.content)
-                except Exception as e:
-                    log(f"❌ 转换失败 ({platform}): {url} | {e}")
-                    if os.path.exists(tmp_path):
-                        os.remove(tmp_path)
-                    continue
+                temp_path = out_path + ".tmp"
 
-                new_sha1 = compute_sha1(tmp_path)
-                if new_sha1 != old_sha1:
-                    os.replace(tmp_path, out_path)
-                    updated_files.append((out_path, platform))
-                    log(f"🔄 [更新] {platform} → {out_path}")
+                # 先把新结果写到临时文件，再和旧文件比较
+                success = fetch_and_save(api_url, temp_path, headers=headers)
+                if success:
+                    new_sha1 = compute_sha1(temp_path)
+                    if new_sha1 != old_sha1:
+                        os.replace(temp_path, out_path)
+                        updated_files.append((out_path, platform))
+                        log(f"🔄 更新 ({platform}): {out_path}")
+                    else:
+                        # 内容相同，跳过并删除临时文件
+                        os.remove(temp_path)
+                        log(f"⏭️ 跳过无变化 ({platform}): {out_path}")
                 else:
-                    os.remove(tmp_path)
-                    log(f"⏭️ [跳过] {platform} ({name}) 无变化")
+                    # 转换失败时，删除临时残留并继续
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                    # 不添加到 updated_files
             else:
-                # 文件不存在时，直接请求并写入
-                try:
-                    resp = requests.get(api_url, headers=headers, timeout=20)
-                    resp.raise_for_status()
-                    with open(out_path, "wb") as f:
-                        f.write(resp.content)
+                # 文件不存在时，直接写入
+                success = fetch_and_save(api_url, out_path, headers=headers)
+                if success:
                     updated_files.append((out_path, platform))
-                    log(f"➕ [新增] {platform} → {out_path}")
-                except Exception as e:
-                    log(f"❌ 转换失败 ({platform}): {url} | {e}")
+                    log(f"➕ 新增 ({platform}): {out_path}")
+                else:
+                    # 转换失败，不要留下空文件
                     if os.path.exists(out_path):
                         os.remove(out_path)
-                    continue
+                    # 不添加到 updated_files
 
-    # 5. 如果启用了 CLEAN_MODE，需要删除多余的旧输出
+    # 7. 如果启用了 CLEAN_MODE，删除 OUTPUT_DIR 下不在 should_keep 的旧文件
     if CLEAN_MODE:
         for root, _, files in os.walk(OUTPUT_DIR):
             for fn in files:
                 fullpath = os.path.join(root, fn)
+                # 只保留 should_keep 里的路径
                 if os.path.normpath(fullpath) not in should_keep:
                     os.remove(fullpath)
-                    # sub = “Surge” 或 “Loon” 或 “Shadowrocket”
-                    sub = os.path.basename(os.path.dirname(fullpath))
-                    deleted_files.append((fullpath, sub))
-                    log(f"🗑️ [删除] 过期输出: {fullpath}")
+                    # 子目录名即平台名称，例如 "Surge"、"Loon" 等
+                    platform_name = os.path.basename(os.path.dirname(fullpath))
+                    deleted_files.append((fullpath, platform_name))
+                    log(f"🗑️ 删除过期输出: {fullpath}")
 
-    # 6. 逐条对 updated_files 做 git add + commit
+    # 8. 对新增/更新的文件逐条执行 git add + commit
     for fp, platform in updated_files:
         fn = os.path.basename(fp)
-        # git add <fp>
-        subprocess.run(["git", "add", fp], check=True)
-        # commit 信息格式： sync(<平台>): <文件名>
-        subprocess.run(
-            ["git", "commit", "-m", f"sync({platform}): {fn}"],
-            check=True
-        )
+        try:
+            subprocess.run(["git", "add", fp], check=True)
+            subprocess.run(
+                ["git", "commit", "-m", f"sync({platform}): {fn}"],
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            log(f"❌ Git 提交失败 (sync {platform}): {fp} | {e}")
 
-    # 7. 逐条对 deleted_files 做 git rm + commit
+    # 9. 对已删除的文件逐条执行 git rm + commit
     for fp, platform in deleted_files:
         fn = os.path.basename(fp)
-        subprocess.run(["git", "rm", fp], check=True)
-        subprocess.run(
-            ["git", "commit", "-m", f"remove({platform}): {fn}"],
-            check=True
-        )
+        try:
+            subprocess.run(["git", "rm", fp], check=True)
+            subprocess.run(
+                ["git", "commit", "-m", f"remove({platform}): {fn}"],
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            log(f"❌ Git 提交失败 (remove {platform}): {fp} | {e}")
 
-    # 8. 如果里头有提交操作，就统一做 git push
+    # 10. 如果有任何新增/更新/删除操作，统一执行一次 git push
     if updated_files or deleted_files:
-        subprocess.run(["git", "push"], check=True)
+        try:
+            subprocess.run(["git", "push"], check=True)
+            log("✅ 所有变更已推送到远程仓库")
+        except subprocess.CalledProcessError as e:
+            log(f"❌ Git Push 失败: {e}")
+    else:
+        log("ℹ️ 本次没有检测到任何输出文件变更，无需推送")
 
-    log("✅ Serverless JSON→Script-Hub 转换完成")
-
+# ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     main()
