@@ -1,4 +1,4 @@
-name: "Sync + 本地化 Script-Hub 转换（无须自建服务器）"
+name: "Sync + 本地化 Script-Hub 转换（增强版，含启动检测）"
 
 on:
   workflow_dispatch: {}
@@ -15,15 +15,9 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # 本地 Script-Hub 服务地址
       SCRIPT_HUB_API_BASE: "http://127.0.0.1:9100"
-      # 如果 JSON 中写的是相对路径，需要提供 GitHub Raw 前缀
-      # 请在 Repository Settings → Secrets → 添加一个 GITHUB_RAW_BASE
       GITHUB_RAW_BASE: ${{ secrets.GITHUB_RAW_BASE }}
-      # CLEAN_MODE 设为 "true" 会自动删除 OUTPUT_DIR 中 JSON 列表以外的旧文件
       CLEAN_MODE: "true"
-
-      # 如果你想让 sync-hub.py 里发通知，就也把下面这些 Secret 一并设置好
       BARK_PUSH_URL: ${{ secrets.BARK_PUSH_URL }}
       SERVERCHAN_SEND_KEY: ${{ secrets.SERVERCHAN_SEND_KEY }}
       WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
@@ -35,7 +29,7 @@ jobs:
 
     steps:
       # -------------------------------------------------------------------
-      # 1. Checkout：拉取仓库并保留凭据，以便后续 git push 能使用 GITHUB_TOKEN
+      # 1. Checkout：拉取仓库并保留凭据，以便后续 git push 使用 GITHUB_TOKEN
       - name: Checkout 仓库
         uses: actions/checkout@v3
         with:
@@ -49,14 +43,14 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       # -------------------------------------------------------------------
-      # 3. 安装 Node.js（需要 ≥18.12，以兼容 pnpm@10）
+      # 3. 安装 Node.js（≥18）
       - name: Setup Node.js 18
         uses: actions/setup-node@v3
         with:
           node-version: "18"
 
       # -------------------------------------------------------------------
-      # 4. Clone 或更新 Script-Hub 后端仓库
+      # 4. Clone 或 update Script-Hub 后端
       - name: 拉取 Script-Hub 后端源码
         run: |
           if [ ! -d ".github/scripts/script-hub-backend" ]; then
@@ -66,15 +60,35 @@ jobs:
           fi
 
       # -------------------------------------------------------------------
-      # 5. 进入后端目录并安装依赖，然后用 npx 启动服务
-      - name: 安装 & 启动 Script-Hub 后端
+      # 5. 安装依赖并启动 Script-Hub 服务（含检测）
+      - name: 安装 & 启动 Script-Hub 后端（含就绪检测）
         run: |
           cd .github/scripts/script-hub-backend
-          npm install -g pnpm               # 安装 pnpm，如果 Runner 未预装
-          pnpm install                      # 安装后端依赖
-          # 用 npx script-hub 启动服务，并监听 9100 端口，放到后台
-          nohup npx script-hub --port 9100 >/dev/null 2>&1 &
-          sleep 5   # 等待 5 秒钟，让后端完全启动
+
+          # 1) 安装 pnpm，如果已安装则此步可跳过
+          npm install -g pnpm || true
+
+          # 2) 安装后端依赖
+          pnpm install
+
+          # 3) 后台启动 Script-Hub 服务（假设版本需用 `serve` 子命令）
+          nohup npx script-hub serve --port 9100 >/dev/null 2>&1 &
+
+          # 4) 等待服务启动，就绪检测（最多等 60 秒，每 5 秒检测一次）
+          for i in {1..12}; do
+            if curl -sI http://127.0.0.1:9100/health | grep -q "200"; then
+              echo "✅ Script-Hub 后端已启动 (port 9100)"
+              break
+            fi
+            echo "⌛ 等待 Script-Hub 后端启动… ($i)"
+            sleep 5
+          done
+
+          # 最后再做一次简单的测试
+          if ! curl -sI http://127.0.0.1:9100/health | grep -q "200"; then
+            echo "❌ Script-Hub 后端启动失败，强制退出"
+            exit 1
+          fi
 
       # -------------------------------------------------------------------
       # 6. 安装 Python，用于执行转换脚本
