@@ -44,11 +44,11 @@ jobs:
           persist-credentials: true
 
       # -------------------------------------------------------------------
-      # 2. 安装 Node.js（Script-Hub 后端需要）
-      - name: Setup Node.js
+      # 2. 安装 Node.js（Script-Hub 后端需要 ≥18.12）
+      - name: Setup Node.js 18
         uses: actions/setup-node@v3
         with:
-          node-version: "16"
+          node-version: "18"
 
       # -------------------------------------------------------------------
       # 3. Clone 或更新 Script-Hub 后端仓库
@@ -65,7 +65,7 @@ jobs:
       - name: 安装 & 编译 Script-Hub 后端
         run: |
           cd .github/scripts/script-hub-backend
-          npm install -g pnpm        # 安装 pnpm（若 Runner 无预装）
+          npm install -g pnpm        # 安装 pnpm（若 Runner 上未预装）
           pnpm install               # 安装依赖
           pnpm run build             # 编译
 
