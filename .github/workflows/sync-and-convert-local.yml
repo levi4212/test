@@ -36,7 +36,7 @@ jobs:
           persist-credentials: true
 
       # -------------------------------------------------------------------
-      # 2. 配置 Git 用户信息，避免 “Please tell me who you are” 错误
+      # 2. 配置 Git 用户信息，避免 "Please tell me who you are" 错误
       - name: 配置 Git 用户信息
         run: |
           git config user.name "github-actions[bot]"
@@ -50,45 +50,95 @@ jobs:
           node-version: "18"
 
       # -------------------------------------------------------------------
-      # 4. Clone 或 update Script-Hub 后端
+      # 4. Clone Script-Hub 后端到临时目录
       - name: 拉取 Script-Hub 后端源码
         run: |
-          if [ ! -d ".github/scripts/script-hub-backend" ]; then
-            git clone https://github.com/Script-Hub-Org/Script-Hub.git .github/scripts/script-hub-backend
-          else
-            cd .github/scripts/script-hub-backend && git pull
-          fi
+          mkdir -p /tmp/script-hub-backend
+          git clone https://github.com/Script-Hub-Org/Script-Hub.git /tmp/script-hub-backend
+          echo "Script-Hub 后端源码已下载到 /tmp/script-hub-backend"
 
       # -------------------------------------------------------------------
-      # 5. 安装依赖并启动 Script-Hub 服务（含检测）
-      - name: 安装 & 启动 Script-Hub 后端（含就绪检测）
+      # 5. 启动 Script-Hub 服务（修复版本）
+      - name: 安装 & 启动 Script-Hub 后端
         run: |
-          cd .github/scripts/script-hub-backend
-
-          # 1) 安装 pnpm，如果已安装则此步可跳过
-          npm install -g pnpm || true
-
-          # 2) 安装后端依赖
-          pnpm install
-
-          # 3) 后台启动 Script-Hub 服务（假设版本需用 `serve` 子命令）
-          nohup npx script-hub serve --port 9100 >/dev/null 2>&1 &
-
-          # 4) 等待服务启动，就绪检测（最多等 60 秒，每 5 秒检测一次）
-          for i in {1..12}; do
-            if curl -sI http://127.0.0.1:9100/health | grep -q "200"; then
-              echo "✅ Script-Hub 后端已启动 (port 9100)"
-              break
-            fi
-            echo "⌛ 等待 Script-Hub 后端启动… ($i)"
-            sleep 5
-          done
-
-          # 最后再做一次简单的测试
-          if ! curl -sI http://127.0.0.1:9100/health | grep -q "200"; then
-            echo "❌ Script-Hub 后端启动失败，强制退出"
+          cd /tmp/script-hub-backend
+          
+          # 1) 检查 package.json 文件存在
+          if [ ! -f package.json ]; then
+            echo "❌ 未找到 package.json，请检查 Script-Hub 仓库结构"
             exit 1
           fi
+          
+          # 2) 安装依赖 (使用 npm 而不是 pnpm，避免额外依赖)
+          echo "📦 安装依赖..."
+          npm install
+          
+          # 3) 检查可用的启动命令
+          echo "📋 package.json 中的 scripts:"
+          cat package.json | grep -A 10 '"scripts"'
+          
+          # 4) 尝试启动服务 (根据实际的 Script-Hub 项目调整启动命令)
+          echo "🚀 启动 Script-Hub 后端..."
+          
+          # 方式1: 如果有 start 命令
+          if npm run | grep -q "start"; then
+            nohup npm start > /tmp/script-hub.log 2>&1 &
+          # 方式2: 如果有 serve 命令  
+          elif npm run | grep -q "serve"; then
+            nohup npm run serve > /tmp/script-hub.log 2>&1 &
+          # 方式3: 直接运行主文件 (需要根据实际项目调整)
+          elif [ -f app.js ]; then
+            nohup node app.js > /tmp/script-hub.log 2>&1 &
+          elif [ -f index.js ]; then
+            nohup node index.js > /tmp/script-hub.log 2>&1 &
+          elif [ -f server.js ]; then
+            nohup node server.js > /tmp/script-hub.log 2>&1 &
+          else
+            echo "❌ 无法确定启动方式，请检查 Script-Hub 项目"
+            exit 1
+          fi
+          
+          # 获取后台进程PID
+          SERVER_PID=$!
+          echo "Script-Hub 后端 PID: $SERVER_PID"
+          
+          # 5) 等待服务启动并检测（最多等 60 秒）
+          echo "⌛ 等待服务启动..."
+          for i in {1..12}; do
+            sleep 5
+            echo "检测第 $i 次..."
+            
+            # 检查进程是否还在运行
+            if ! kill -0 $SERVER_PID 2>/dev/null; then
+              echo "❌ Script-Hub 进程已退出，查看日志:"
+              cat /tmp/script-hub.log
+              exit 1
+            fi
+            
+            # 检查服务是否响应 (尝试不同的健康检查端点)
+            if curl -f -s http://127.0.0.1:9100/ > /dev/null 2>&1; then
+              echo "✅ Script-Hub 后端已启动 (端口 9100)"
+              break
+            elif curl -f -s http://127.0.0.1:9100/health > /dev/null 2>&1; then
+              echo "✅ Script-Hub 后端已启动 (端口 9100, /health)"
+              break  
+            elif curl -f -s http://127.0.0.1:9100/api > /dev/null 2>&1; then
+              echo "✅ Script-Hub 后端已启动 (端口 9100, /api)"
+              break
+            fi
+            
+            if [ $i -eq 12 ]; then
+              echo "❌ Script-Hub 后端启动超时，查看日志:"
+              cat /tmp/script-hub.log
+              echo "尝试直接测试连接:"
+              curl -v http://127.0.0.1:9100/ || true
+              exit 1
+            fi
+            
+            echo "等待中... ($i/12)"
+          done
+          
+          echo "🎉 Script-Hub 后端启动成功!"
 
       # -------------------------------------------------------------------
       # 6. 安装 Python，用于执行转换脚本
@@ -109,7 +159,11 @@ jobs:
       #    如果不需要，注释或删除以下三行即可
       - name: 运行 sync-hub.py（可选同步步骤）
         run: |
-          python .github/scripts/sync-hub.py
+          if [ -f .github/scripts/sync-hub.py ]; then
+            python .github/scripts/sync-hub.py
+          else
+            echo "sync-hub.py 不存在，跳过此步骤"
+          fi
 
       # -------------------------------------------------------------------
       # 9. 运行本地化转换脚本：convert_hub_local.py
@@ -122,4 +176,20 @@ jobs:
       - name: 打印 SCRIPT-HUB-OUTPUT 目录
         run: |
           echo "---- SCRIPT-HUB-OUTPUT 目录 ----"
-          find SCRIPT-HUB-OUTPUT -maxdepth 3 | sed 's/^/  /'
+          if [ -d "SCRIPT-HUB-OUTPUT" ]; then
+            find SCRIPT-HUB-OUTPUT -maxdepth 3 | sed 's/^/  /'
+          else
+            echo "  SCRIPT-HUB-OUTPUT 目录不存在"
+          fi
+
+      # -------------------------------------------------------------------
+      # 11. 显示 Script-Hub 日志（调试用）
+      - name: 显示 Script-Hub 日志
+        if: always()
+        run: |
+          echo "---- Script-Hub 服务日志 ----"
+          if [ -f /tmp/script-hub.log ]; then
+            cat /tmp/script-hub.log
+          else
+            echo "日志文件不存在"
+          fi
