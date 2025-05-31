@@ -1,4 +1,4 @@
-name: "Sync + 本地化 Script-Hub 转换（增强版，含启动检测）"
+name: "Script 转换器（使用在线 API）"
 
 on:
   workflow_dispatch: {}
@@ -10,14 +10,13 @@ on:
       - '.github/workflows/*.yml'
 
 jobs:
-  convert_and_host:
+  convert_scripts:
     runs-on: ubuntu-latest
     
     permissions:
-      contents: write  # 需要写权限来推送文件
+      contents: write
 
     env:
-      SCRIPT_HUB_PORT: 9100
       OUTPUT_DIR: "converted-scripts"
 
     steps:
@@ -33,102 +32,19 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
 
-      # 3. 设置 Node.js 环境（移除缓存配置）
-      - name: 设置 Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          # 移除 cache: 'npm' 这一行，因为当前仓库没有 package-lock.json
-
-      # 4. 下载并设置 Script-Hub
-      - name: 下载 Script-Hub 后端
-        run: |
-          echo "📥 下载 Script-Hub 源码..."
-          git clone --depth=1 https://github.com/Script-Hub-Org/Script-Hub.git /tmp/script-hub
-          cd /tmp/script-hub
-          
-          echo "📦 安装依赖..."
-          npm install --production
-          
-          echo "✅ Script-Hub 后端准备完成"
-
-      # 5. 启动 Script-Hub 服务
-      - name: 启动 Script-Hub 后端
-        run: |
-          cd /tmp/script-hub
-          
-          # 查看可用的启动命令
-          echo "📋 检查 package.json 脚本..."
-          if [ -f package.json ]; then
-            npm run 2>&1 | grep -E "^  " || echo "未找到预定义脚本"
-          fi
-          
-          # 查找主入口文件
-          MAIN_FILE=""
-          if [ -f package.json ] && grep -q '"main"' package.json; then
-            MAIN_FILE=$(node -e "console.log(require('./package.json').main || '')")
-          fi
-          
-          # 按优先级尝试启动
-          echo "🚀 启动 Script-Hub 服务..."
-          if npm run start --if-present 2>/dev/null; then
-            echo "使用 npm start 启动"
-            nohup npm start > /tmp/script-hub.log 2>&1 &
-          elif [ -n "$MAIN_FILE" ] && [ -f "$MAIN_FILE" ]; then
-            echo "使用主文件启动: $MAIN_FILE"
-            nohup node "$MAIN_FILE" > /tmp/script-hub.log 2>&1 &
-          elif [ -f "app.js" ]; then
-            echo "使用 app.js 启动"
-            nohup node app.js > /tmp/script-hub.log 2>&1 &
-          elif [ -f "index.js" ]; then
-            echo "使用 index.js 启动"
-            nohup node index.js > /tmp/script-hub.log 2>&1 &
-          elif [ -f "server.js" ]; then
-            echo "使用 server.js 启动"
-            nohup node server.js > /tmp/script-hub.log 2>&1 &
-          else
-            echo "❌ 无法找到启动入口"
-            ls -la
-            exit 1
-          fi
-          
-          # 等待服务启动
-          echo "⏳ 等待服务启动..."
-          for i in {1..30}; do
-            sleep 2
-            if curl -s http://127.0.0.1:$SCRIPT_HUB_PORT >/dev/null 2>&1; then
-              echo "✅ Script-Hub 服务已启动 (端口 $SCRIPT_HUB_PORT)"
-              break
-            elif curl -s http://127.0.0.1:$SCRIPT_HUB_PORT/health >/dev/null 2>&1; then
-              echo "✅ Script-Hub 服务已启动 (端口 $SCRIPT_HUB_PORT)"
-              break
-            fi
-            
-            if [ $i -eq 30 ]; then
-              echo "❌ 服务启动超时"
-              echo "=== 服务日志 ==="
-              cat /tmp/script-hub.log 2>/dev/null || echo "无日志文件"
-              echo "=== 网络检查 ==="
-              netstat -tlnp | grep :$SCRIPT_HUB_PORT || echo "端口未监听"
-              exit 1
-            fi
-            
-            echo "等待中... ($i/30)"
-          done
-
-      # 6. 设置 Python 环境
+      # 3. 设置 Python 环境
       - name: 设置 Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
 
-      # 7. 安装 Python 依赖
+      # 4. 安装 Python 依赖
       - name: 安装 Python 依赖
         run: |
           python -m pip install --upgrade pip
-          pip install requests urllib3
+          pip install requests urllib3 pyyaml
 
-      # 8. 执行转换脚本
+      # 5. 执行脚本转换（使用在线 API）
       - name: 执行脚本转换
         run: |
           python3 << 'EOF'
@@ -137,17 +53,43 @@ jobs:
           import requests
           import hashlib
           import subprocess
-          from pathlib import Path
-          from urllib.parse import quote_plus
           import time
+          import re
+          from pathlib import Path
+          from urllib.parse import quote, urlencode
 
           # 配置
           JSON_CONFIG = "script-hub-list.json"
           OUTPUT_DIR = "converted-scripts"
-          API_BASE = "http://127.0.0.1:9100"
           
-          # 目标平台配置
-          PLATFORMS = {
+          # 在线转换 API 列表（按优先级排序）
+          CONVERSION_APIS = [
+              {
+                  "name": "Script-Hub Official",
+                  "base_url": "https://script.hub/file",
+                  "platforms": {
+                      "Surge": "Surge",
+                      "Loon": "Loon", 
+                      "Shadowrocket": "Shadowrocket",
+                      "Stash": "Stash",
+                      "Plain": "Plain"
+                  }
+              },
+              {
+                  "name": "Script-Hub Mirror 1",
+                  "base_url": "https://scripthub.vercel.app/file",
+                  "platforms": {
+                      "Surge": "Surge",
+                      "Loon": "Loon", 
+                      "Shadowrocket": "Shadowrocket",
+                      "Stash": "Stash",
+                      "Plain": "Plain"
+                  }
+              }
+          ]
+          
+          # 目标平台文件扩展名
+          PLATFORM_EXTENSIONS = {
               "Surge": ".sgmodule",
               "Loon": ".plugin", 
               "Shadowrocket": ".shimodule",
@@ -166,11 +108,24 @@ jobs:
                       sha256_hash.update(chunk)
               return sha256_hash.hexdigest()
 
-          def convert_script(name, url, platform):
-              """转换单个脚本"""
+          def test_api_endpoint(api_config):
+              """测试 API 端点是否可用"""
               try:
+                  test_url = f"{api_config['base_url']}/Surge/https://raw.githubusercontent.com/NobyDa/Script/master/Surge/JS/Bilibili_Auto_Regions.js"
+                  response = requests.get(test_url, timeout=10)
+                  return response.status_code == 200
+              except:
+                  return False
+
+          def convert_script_with_api(name, url, platform, api_config):
+              """使用指定 API 转换脚本"""
+              try:
+                  platform_name = api_config["platforms"].get(platform)
+                  if not platform_name:
+                      return None
+                  
                   # 构造 API URL
-                  api_url = f"{API_BASE}/file/{platform}/{quote_plus(url)}"
+                  api_url = f"{api_config['base_url']}/{platform_name}/{quote(url, safe='')}"
                   
                   # 发送请求
                   response = requests.get(api_url, timeout=30)
@@ -178,8 +133,41 @@ jobs:
                   
                   return response.content
               except Exception as e:
-                  log(f"❌ 转换失败 [{platform}] {name}: {e}")
+                  log(f"❌ API {api_config['name']} 转换失败 [{platform}] {name}: {e}")
                   return None
+
+          def convert_script(name, url, platform):
+              """尝试用多个 API 转换脚本"""
+              for api_config in CONVERSION_APIS:
+                  log(f"🔄 尝试使用 {api_config['name']} 转换 [{platform}] {name}")
+                  content = convert_script_with_api(name, url, platform, api_config)
+                  if content:
+                      log(f"✅ 使用 {api_config['name']} 成功转换 [{platform}] {name}")
+                      return content
+                  time.sleep(1)  # 避免请求过快
+              
+              log(f"❌ 所有 API 都无法转换 [{platform}] {name}")
+              return None
+
+          def create_simple_conversion(name, url, platform):
+              """创建简单的重定向文件（备用方案）"""
+              if platform == "Plain":
+                  return f"# {name}\n# 原始链接: {url}\n\n# 请手动访问上述链接获取脚本内容\n".encode('utf-8')
+              elif platform == "Surge":
+                  return f"""#!name={name}
+          #!desc=Auto converted from {url}
+          
+          [Script]
+          # 请手动配置脚本规则
+          # 原始链接: {url}
+          """.encode('utf-8')
+              else:
+                  return f"""# {name}
+          # 原始链接: {url}
+          # 平台: {platform}
+          # 
+          # 注意: 自动转换失败，请手动配置
+          """.encode('utf-8')
 
           def main():
               # 检查配置文件
@@ -199,9 +187,25 @@ jobs:
                   log("❌ 配置文件格式错误，应为数组")
                   return False
 
+              # 测试可用的 API
+              log("🔍 测试 API 端点...")
+              available_apis = []
+              for api_config in CONVERSION_APIS:
+                  if test_api_endpoint(api_config):
+                      available_apis.append(api_config)
+                      log(f"✅ {api_config['name']} 可用")
+                  else:
+                      log(f"❌ {api_config['name']} 不可用")
+              
+              if not available_apis:
+                  log("⚠️ 所有在线 API 都不可用，将创建备用文件")
+              else:
+                  global CONVERSION_APIS
+                  CONVERSION_APIS = available_apis
+
               # 创建输出目录
               Path(OUTPUT_DIR).mkdir(exist_ok=True)
-              for platform in PLATFORMS.keys():
+              for platform in PLATFORM_EXTENSIONS.keys():
                   Path(OUTPUT_DIR, platform).mkdir(exist_ok=True)
 
               # 记录变更
@@ -219,13 +223,16 @@ jobs:
                   log(f"🔄 处理脚本: {name}")
                   
                   # 转换到各个平台
-                  for platform, ext in PLATFORMS.items():
+                  for platform, ext in PLATFORM_EXTENSIONS.items():
                       output_file = Path(OUTPUT_DIR, platform, f"{name}{ext}")
                       
                       # 转换脚本
                       content = convert_script(name, url, platform)
+                      
+                      # 如果转换失败，创建备用文件
                       if content is None:
-                          continue
+                          content = create_simple_conversion(name, url, platform)
+                          log(f"⚠️ 创建备用文件 [{platform}] {name}")
                       
                       # 检查是否需要更新
                       should_update = True
@@ -251,6 +258,9 @@ jobs:
                               f.write(content)
                           changes.append(f"add({platform}): {name}{ext}")
                           log(f"➕ 新增 [{platform}] {name}")
+                      
+                      # 短暂延迟，避免请求过快
+                      time.sleep(0.5)
 
               # 提交变更
               if changes:
@@ -273,7 +283,7 @@ jobs:
                   exit(1)
           EOF
 
-      # 9. 推送变更
+      # 6. 推送变更
       - name: 推送更新
         run: |
           if git diff --staged --quiet; then
@@ -284,7 +294,7 @@ jobs:
             echo "✅ 推送完成"
           fi
 
-      # 10. 生成使用指南
+      # 7. 生成使用指南
       - name: 生成使用指南
         run: |
           if [ -d "$OUTPUT_DIR" ]; then
@@ -293,6 +303,7 @@ jobs:
           import os
           import json
           from pathlib import Path
+          from datetime import datetime
 
           OUTPUT_DIR = "converted-scripts"
           REPO_URL = os.environ.get('GITHUB_SERVER_URL', 'https://github.com') + '/' + os.environ.get('GITHUB_REPOSITORY', '')
@@ -305,30 +316,32 @@ jobs:
                   scripts = json.load(f)
 
           # 生成 README
-          readme_content = f"""# Script-Hub 转换结果
+          readme_content = f"""# 脚本转换结果
 
-          本仓库自动转换脚本为各平台格式，每日自动更新。
+          本仓库自动转换脚本为各代理工具格式，每日自动更新。
 
           ## 📱 支持平台
 
-          - **Surge**: `.sgmodule` 格式
-          - **Loon**: `.plugin` 格式  
-          - **Shadowrocket**: `.shimodule` 格式
-          - **Stash**: `.stoverride` 格式
+          - **Surge**: `.sgmodule` 模块格式
+          - **Loon**: `.plugin` 插件格式  
+          - **Shadowrocket**: `.shimodule` 模块格式
+          - **Stash**: `.stoverride` 覆写格式
           - **Plain**: `.txt` 纯文本格式
 
           ## 🔗 使用方法
 
-          直接复制下方对应平台的 Raw 链接到你的代理工具中：
+          点击下方对应平台的链接，复制 Raw URL 到你的代理工具中：
 
           """
 
           for script in scripts:
               name = script.get('name', '')
+              original_url = script.get('url', '')
               if not name:
                   continue
                   
               readme_content += f"\n### {name}\n\n"
+              readme_content += f"**原始链接**: {original_url}\n\n"
               
               platforms = {
                   "Surge": ".sgmodule",
@@ -345,19 +358,40 @@ jobs:
                       readme_content += f"- **{platform}**: [`{name}{ext}`]({raw_url})\n"
 
           readme_content += f"""
+
           ## 🔄 更新频率
 
           - 每日 UTC 02:00 自动检查更新
-          - 脚本源文件变更时自动触发转换
+          - 配置文件变更时自动触发转换
           - 支持手动触发转换
 
-          ## 📋 脚本列表
+          ## 📋 脚本统计
 
-          当前转换的脚本数量: **{len(scripts)}** 个
+          - 脚本总数: **{len(scripts)}** 个
+          - 支持平台: **5** 个
+
+          ## ⚠️ 使用说明
+
+          1. 部分脚本可能需要手动配置参数
+          2. 如果转换失败，会生成包含原始链接的备用文件
+          3. 建议优先使用 Surge、Loon 等主流平台的转换结果
+
+          ## 🔧 添加新脚本
+
+          编辑 `script-hub-list.json` 文件，添加以下格式的配置：
+
+          ```json
+          [
+            {{
+              "name": "脚本名称",
+              "url": "https://原始脚本链接"
+            }}
+          ]
+          ```
 
           ---
           
-          *最后更新: $(date -u '+%Y-%m-%d %H:%M:%S UTC')*
+          *最后更新: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC*  
           *由 GitHub Actions 自动生成*
           """
 
@@ -369,37 +403,32 @@ jobs:
           EOF
           fi
 
-      # 11. 显示结果统计
+      # 8. 显示结果统计
       - name: 显示转换结果
         run: |
           echo "📊 转换结果统计:"
           if [ -d "$OUTPUT_DIR" ]; then
+            total_files=0
             for platform in Surge Loon Shadowrocket Stash Plain; do
               if [ -d "$OUTPUT_DIR/$platform" ]; then
                 count=$(find "$OUTPUT_DIR/$platform" -name "*.*" -type f | wc -l)
                 echo "  $platform: $count 个文件"
+                total_files=$((total_files + count))
               fi
             done
             
+            echo "  总计: $total_files 个文件"
             echo ""
-            echo "🔗 Raw 文件访问基础 URL:"
-            echo "  https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_REF_NAME/$OUTPUT_DIR/"
+            echo "🔗 访问链接模板:"
+            echo "  https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_REF_NAME/$OUTPUT_DIR/[平台]/[脚本名][扩展名]"
             
             echo ""
-            echo "📁 目录结构:"
-            tree "$OUTPUT_DIR" 2>/dev/null || find "$OUTPUT_DIR" -type f | head -20
+            echo "📁 输出目录结构:"
+            if command -v tree >/dev/null; then
+              tree "$OUTPUT_DIR" -L 2
+            else
+              find "$OUTPUT_DIR" -type f | head -20
+            fi
           else
             echo "❌ 输出目录不存在"
-          fi
-
-      # 12. 清理和错误处理
-      - name: 清理临时文件
-        if: always()
-        run: |
-          echo "🧹 清理临时文件..."
-          rm -rf /tmp/script-hub* 2>/dev/null || true
-          
-          if [ -f /tmp/script-hub.log ]; then
-            echo "📋 Script-Hub 服务日志:"
-            tail -50 /tmp/script-hub.log
           fi
